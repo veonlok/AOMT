@@ -1,0 +1,12 @@
+.venv/
+llada2mini/
+hf/
+pipcache/
+tmp/
+wandb/
+runs/*/lora_adapter/
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+*.pt

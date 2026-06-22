@@ -1,0 +1,43 @@
+host=xgph0
+GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-31290804-b003-ec87-d8eb-b275471142b7)
+[load] tokenizer + model (bf16)...
+[load] PAD_ID=156892 MASK_ID=156895 vocab=157153
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/7 [00:00<?, ?it/s]Loading checkpoint shards:  14%|█▍        | 1/7 [00:00<00:01,  4.93it/s]Loading checkpoint shards:  29%|██▊       | 2/7 [00:00<00:01,  4.48it/s]Loading checkpoint shards:  43%|████▎     | 3/7 [00:00<00:00,  4.37it/s]Loading checkpoint shards:  57%|█████▋    | 4/7 [00:00<00:00,  4.30it/s]Loading checkpoint shards:  71%|███████▏  | 5/7 [00:01<00:00,  4.29it/s]Loading checkpoint shards:  86%|████████▌ | 6/7 [00:01<00:00,  4.25it/s]Loading checkpoint shards: 100%|██████████| 7/7 [00:01<00:00,  4.73it/s]
+[lora] target_modules=['query_key_value', 'dense']
+trainable params: 2,949,120 || all params: 16,258,587,648 || trainable%: 0.0181
+[data] train=1187 val=148
+wandb: Tracking run with wandb version 0.27.2
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /home/a/arnavk4/dflex_proj/wandb/offline-run-20260615_142306-vps2cth5
+[step   0/200] train=59.889 val=11.665 obj=full_completion r=0.10 (17s)
+[step  25/200] train=3.884 val=3.566 obj=next_observation r=0.16 (351s)
+[step  50/200] train=2.630 val=3.439 obj=next_action r=0.23 (686s)
+[step  75/200] train=3.959 val=5.750 obj=future_from_past r=0.29 (1019s)
+[step 100/200] train=4.570 val=1.947 obj=future_from_past r=0.35 (1354s)
+[step 125/200] train=2.811 val=2.665 obj=next_observation r=0.41 (1690s)
+[step 150/200] train=0.029 val=4.223 obj=next_action r=0.48 (2026s)
+[step 175/200] train=1.297 val=2.944 obj=inverse_dynamics r=0.54 (2361s)
+[step 199/200] train=4.410 val=2.483 obj=full_completion r=0.60 (2681s)
+wandb: 
+wandb: Run history:
+wandb:                  lr ▂▄██████▇▇▇▇▇▆▆▆▆▆▅▅▄▄▄▄▄▃▃▃▃▂▂▂▂▂▂▁▁▁▁▁
+wandb:          train/loss ▆▂▂▂▁▁▂▁▁▁▁▁▁▁▁▂█▄▂▁▁▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: train/objective_idx ▅▃▁▂▂▂▄▄▂▁▆▁▇▃▂█▁▄▁▃▃▇▅▂█▃▆█▁▆▅▃▂▁▃█▆▃▆▄
+wandb:  train/target_ratio ▁▁▁▂▂▂▂▂▂▃▃▃▃▄▄▄▅▅▅▅▅▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇██
+wandb:            val/loss █▂▂▄▁▂▃▂▁
+wandb: 
+wandb: Run summary:
+wandb:                  lr 0.0
+wandb:          train/loss 4.41036
+wandb: train/objective_idx 3
+wandb:  train/target_ratio 0.6
+wandb:            val/loss 2.48336
+wandb: 
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /home/a/arnavk4/dflex_proj/wandb/offline-run-20260615_142306-vps2cth5
+wandb: Find logs at: ./wandb/offline-run-20260615_142306-vps2cth5/logs
+[done] {"final_train_loss": 4.410361707210541, "final_val_loss": 2.4833624735474586, "objective_avg_loss": {"next_action": 4.587784113580407, "next_observation": 5.616772137631064, "future_from_past": 4.443970183232943, "full_completion": 9.151888891709623, "goal_conditioned_action": 1.555929259934904, "inverse_dynamics": 3.9716716294089567, "retrodiction": 12.119626605676281, "intermediate_imputation": 3.370528586790897, "observation_denoising": 3.8470863550901413}, "supervision_budget_by_type": {"goal": 54, "think": 5873, "action": 1037, "obs": 24043}, "lora_targets": ["query_key_value", "dense"], "minutes": 44.69}
+[charts] ['runs/llada_dflex_full/charts/loss_curve.png', 'runs/llada_dflex_full/charts/loss_by_objective.png', 'runs/llada_dflex_full/charts/curriculum.png', 'runs/llada_dflex_full/charts/supervision_budget.png']
+[adapter] runs/llada_dflex_full/lora_adapter
+FINISHED

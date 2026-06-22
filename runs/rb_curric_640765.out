@@ -1,0 +1,45 @@
+host=xgph3 run=rb_curric obj=random_block sched=curriculum
+GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-dfb406ec-4bbc-40a8-845a-1d68cdee38ca)
+[data] train=1187 val=148 | MASK=156895 PAD=156892
+[load] LLaDA2.0-mini bf16 ...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/7 [00:00<?, ?it/s]Loading checkpoint shards:  14%|█▍        | 1/7 [00:00<00:01,  4.73it/s]Loading checkpoint shards:  29%|██▊       | 2/7 [00:00<00:01,  4.32it/s]Loading checkpoint shards:  43%|████▎     | 3/7 [00:00<00:00,  4.36it/s]Loading checkpoint shards:  57%|█████▋    | 4/7 [00:00<00:00,  4.67it/s]Loading checkpoint shards:  71%|███████▏  | 5/7 [00:01<00:00,  4.87it/s]Loading checkpoint shards:  86%|████████▌ | 6/7 [00:01<00:00,  5.01it/s]Loading checkpoint shards: 100%|██████████| 7/7 [00:01<00:00,  5.26it/s]
+trainable params: 2,949,120 || all params: 16,258,587,648 || trainable%: 0.0181
+wandb: Tracking run with wandb version 0.27.2
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /home/a/arnavk4/dflex_proj/wandb/offline-run-20260622_134109-9nt5p7qu
+[step   0/400] train=5.218 val=5.575 rate=0.11 (19s)
+[step  25/400] train=4.629 val=3.999 rate=0.14 (414s)
+[step  50/400] train=1.306 val=0.780 rate=0.16 (816s)
+[step  75/400] train=0.532 val=0.651 rate=0.19 (1222s)
+[step 100/400] train=0.614 val=0.693 rate=0.24 (1629s)
+[step 125/400] train=0.543 val=0.371 rate=0.26 (2038s)
+[step 150/400] train=0.479 val=0.550 rate=0.30 (2447s)
+[step 175/400] train=0.426 val=0.446 rate=0.32 (2858s)
+[step 200/400] train=0.565 val=0.321 rate=0.34 (3267s)
+[step 225/400] train=0.340 val=0.685 rate=0.37 (3676s)
+[step 250/400] train=0.637 val=0.588 rate=0.43 (4087s)
+[step 275/400] train=0.436 val=0.582 rate=0.44 (4496s)
+[step 300/400] train=0.763 val=0.730 rate=0.48 (4905s)
+[step 325/400] train=0.595 val=0.740 rate=0.51 (5316s)
+[step 350/400] train=0.920 val=0.894 rate=0.56 (5725s)
+[step 375/400] train=0.898 val=1.167 rate=0.55 (6135s)
+[step 399/400] train=1.172 val=1.099 rate=0.60 (6528s)
+wandb: 
+wandb: Run history:
+wandb:              lr ▁▂▃▆███████▇▇▇▇▇▇▆▆▆▅▅▅▅▅▄▄▄▃▂▂▁▁▁▁▁▁▁▁▁
+wandb:      train/loss ██▇▅▄▃▃▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁▁▁▂▁▁▂▂
+wandb: train/mask_rate ▁▁▂▂▂▃▂▃▃▃▃▃▄▄▄▄▄▅▅▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇█▇██
+wandb:        val/loss █▆▂▁▁▁▁▁▁▁▁▁▂▂▂▂▂
+wandb: 
+wandb: Run summary:
+wandb:              lr 0.0
+wandb:      train/loss 1.17196
+wandb: train/mask_rate 0.60231
+wandb:        val/loss 1.09868
+wandb: 
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /home/a/arnavk4/dflex_proj/wandb/offline-run-20260622_134109-9nt5p7qu
+wandb: Find logs at: ./wandb/offline-run-20260622_134109-9nt5p7qu/logs
+[done] {"final_train_loss": 1.1719576716423035, "final_val_loss": 1.0986815690994263, "mean_mask_rate": 0.3499221515170128, "objective_set": "random_block", "schedule": "curriculum", "supervision_budget_by_type": {"goal": 0, "think": 137700, "action": 22335, "obs": 239397}, "minutes": 108.8}
+FINISHED

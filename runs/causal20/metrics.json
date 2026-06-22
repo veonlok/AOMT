@@ -1,0 +1,14 @@
+{
+  "final_train_loss": 4.48844850063324,
+  "final_val_loss": 4.103712360064189,
+  "mean_mask_rate": 0.14971272915776285,
+  "objective_set": "causal",
+  "schedule": "constant",
+  "supervision_budget_by_type": {
+    "goal": 0,
+    "think": 52786,
+    "action": 13348,
+    "obs": 106910
+  },
+  "minutes": 104.95
+}

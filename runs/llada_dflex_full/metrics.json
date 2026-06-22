@@ -1,0 +1,26 @@
+{
+  "final_train_loss": 4.410361707210541,
+  "final_val_loss": 2.4833624735474586,
+  "objective_avg_loss": {
+    "next_action": 4.587784113580407,
+    "next_observation": 5.616772137631064,
+    "future_from_past": 4.443970183232943,
+    "full_completion": 9.151888891709623,
+    "goal_conditioned_action": 1.555929259934904,
+    "inverse_dynamics": 3.9716716294089567,
+    "retrodiction": 12.119626605676281,
+    "intermediate_imputation": 3.370528586790897,
+    "observation_denoising": 3.8470863550901413
+  },
+  "supervision_budget_by_type": {
+    "goal": 54,
+    "think": 5873,
+    "action": 1037,
+    "obs": 24043
+  },
+  "lora_targets": [
+    "query_key_value",
+    "dense"
+  ],
+  "minutes": 44.69
+}

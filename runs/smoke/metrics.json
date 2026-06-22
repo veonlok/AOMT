@@ -1,0 +1,22 @@
+{
+  "final_train_loss": 49.35086441040039,
+  "final_val_loss": 58.5476442972819,
+  "n_params_M": 1.51,
+  "objective_avg_loss": {
+    "next_action": 91.83791767467152,
+    "next_observation": 81.78159586588542,
+    "future_from_past": 69.57107543945312,
+    "full_completion": 105.32674560546874,
+    "goal_conditioned_action": 18.58378028869629,
+    "inverse_dynamics": 57.48004341125488,
+    "retrodiction": 88.47492599487305,
+    "observation_denoising": 36.394752502441406
+  },
+  "supervision_budget_by_type": {
+    "goal": 0,
+    "think": 417,
+    "action": 130,
+    "obs": 1686
+  },
+  "minutes": 0.03
+}

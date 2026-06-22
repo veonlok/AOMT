@@ -1,0 +1,14 @@
+{
+  "final_train_loss": 1.1719576716423035,
+  "final_val_loss": 1.0986815690994263,
+  "mean_mask_rate": 0.3499221515170128,
+  "objective_set": "random_block",
+  "schedule": "curriculum",
+  "supervision_budget_by_type": {
+    "goal": 0,
+    "think": 137700,
+    "action": 22335,
+    "obs": 239397
+  },
+  "minutes": 108.8
+}

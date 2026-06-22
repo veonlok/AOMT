@@ -1,0 +1,36 @@
+{
+  "block_type_counts": {
+    "Action": 19880,
+    "Goal": 1483,
+    "Observation": 18397,
+    "Think": 19880
+  },
+  "env": "scienceworld",
+  "generated_at": "2026-06-10T04:45:22.100773Z",
+  "leakage_audit": {
+    "flags_by_type": {
+      "think_copies_future_observation": 44,
+      "think_mentions_future": 5
+    },
+    "records_flagged": 49,
+    "total_flags": 49
+  },
+  "notes": "ETO ScienceWorld SFT trajectories normalized for CP2107 MVP",
+  "raw_sources": [
+    "data/raw/scienceworld/sciworld_sft.json"
+  ],
+  "revision": "scienceworld-eto-mvp",
+  "schema_version": "trajectory-v1",
+  "split_seed": 7,
+  "state_label_keys": [],
+  "token_counts": {
+    "test": 115163,
+    "train": 982567,
+    "validation": 127034
+  },
+  "trajectory_counts": {
+    "test": 148,
+    "train": 1187,
+    "validation": 148
+  }
+}

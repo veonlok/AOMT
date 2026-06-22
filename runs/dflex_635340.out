@@ -1,0 +1,54 @@
+host=xgph11
+GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-d5994002-15eb-bf54-2ead-39872e30e4f6)
+  MIG 3g.40gb     Device  0: (UUID: MIG-5fbda018-4ba2-5ab9-9a5b-d8bd75985cb2)
+compute egress: YES
+[data] vocab=1983 train=1187 val=148
+/home/a/arnavk4/dflex_proj/train_dflex.py:278: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.encoder = nn.TransformerEncoder(enc, layers)
+[model] params=21.0M device=cuda
+wandb: Tracking run with wandb version 0.27.2
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /home/a/arnavk4/dflex_proj/wandb/offline-run-20260615_131257-10e0y03r
+[step    0/3000] train=603.376 val=522.145 obj=full_completion r=0.10 (1s)
+[step  150/3000] train=31.205 val=19.516 obj=future_from_past r=0.13 (19s)
+[step  300/3000] train=21.025 val=20.325 obj=future_from_past r=0.15 (38s)
+[step  450/3000] train=23.782 val=15.479 obj=future_from_past r=0.18 (56s)
+[step  600/3000] train=14.932 val=13.167 obj=next_observation r=0.20 (74s)
+[step  750/3000] train=21.582 val=12.136 obj=full_completion r=0.23 (92s)
+[step  900/3000] train=13.331 val=14.471 obj=full_completion r=0.25 (110s)
+[step 1050/3000] train=12.481 val=14.423 obj=next_observation r=0.28 (128s)
+[step 1200/3000] train=9.862 val=12.906 obj=retrodiction r=0.30 (147s)
+[step 1350/3000] train=9.610 val=10.852 obj=next_action r=0.33 (165s)
+[step 1500/3000] train=15.653 val=9.286 obj=next_action r=0.35 (183s)
+[step 1650/3000] train=12.584 val=7.469 obj=future_from_past r=0.38 (201s)
+[step 1800/3000] train=12.554 val=10.214 obj=next_action r=0.40 (219s)
+[step 1950/3000] train=10.735 val=14.617 obj=full_completion r=0.43 (237s)
+[step 2100/3000] train=8.767 val=10.669 obj=inverse_dynamics r=0.45 (255s)
+[step 2250/3000] train=14.401 val=9.834 obj=next_action r=0.48 (273s)
+[step 2400/3000] train=11.519 val=13.089 obj=inverse_dynamics r=0.50 (292s)
+[step 2550/3000] train=9.287 val=9.073 obj=next_observation r=0.53 (310s)
+[step 2700/3000] train=8.188 val=7.756 obj=next_action r=0.55 (328s)
+[step 2850/3000] train=8.922 val=9.461 obj=observation_denoising r=0.58 (346s)
+[step 2999/3000] train=10.464 val=8.563 obj=inverse_dynamics r=0.60 (364s)
+wandb: 
+wandb: Run history:
+wandb:                  lr ▂▃▄▅▅▆▇███████▇▇▇▆▆▅▄▄▄▄▃▃▃▃▂▂▂▂▂▂▂▁▁▁▁▁
+wandb:          train/loss █▃▄▂▁▁▁▁▁▁▁▁▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: train/objective_idx ▁▃▁▂▄▅▃▃▆▄▄▅▂▇█▃▁▂▁███▆▇▇▃▃▄▁▂▆▄██▆▂▁▁▃▆
+wandb:  train/target_ratio ▁▁▁▁▁▁▁▁▂▂▂▂▂▂▂▃▃▄▄▄▄▄▄▄▄▆▆▆▆▆▇▇▇▇▇█████
+wandb:            val/loss █▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: 
+wandb: Run summary:
+wandb:                  lr 0.0
+wandb:          train/loss 10.4635
+wandb: train/objective_idx 5
+wandb:  train/target_ratio 0.6
+wandb:            val/loss 8.56257
+wandb: 
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /home/a/arnavk4/dflex_proj/wandb/offline-run-20260615_131257-10e0y03r
+wandb: Find logs at: ./wandb/offline-run-20260615_131257-10e0y03r/logs
+[done] {"final_train_loss": 10.46350383758545, "final_val_loss": 8.562568505605062, "n_params_M": 20.98, "objective_avg_loss": {"next_action": 27.574981238390947, "next_observation": 19.09439862039354, "future_from_past": 18.581920061388242, "full_completion": 22.58714920357813, "goal_conditioned_action": 23.23779775785363, "inverse_dynamics": 18.856189655912097, "retrodiction": 11.921359337753985, "intermediate_imputation": 12.129861448412743, "observation_denoising": 12.480464852374533}, "supervision_budget_by_type": {"goal": 997, "think": 1001117, "action": 194392, "obs": 1968812}, "minutes": 6.07}
+[charts] ['runs/dflex_full/charts/loss_curve.png', 'runs/dflex_full/charts/loss_by_objective.png', 'runs/dflex_full/charts/curriculum.png', 'runs/dflex_full/charts/supervision_budget.png']
+[ckpt] runs/dflex_full/dflex_model.pt
+FINISHED
