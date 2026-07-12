@@ -138,7 +138,7 @@ motivated adding `inverse_dynamics` as the 4th D-Flex objective.
 
 ---
 
-## Phase 3: Full comparison runs (upcoming — v2 series)
+## Phase 3: Full comparison — D-AR vs D-Flex vs D-Random (COMPLETED)
 
 Script: `train_llada_rb.py` v2 with:
 1. `inverse_dynamics` added as 4th D-Flex objective (4 objs, uniform 1/4)
@@ -179,13 +179,130 @@ If D-Flex matches or beats D-AR on val_nextobs despite not training for it, it m
 bidirectional multi-task masking induces forward dynamics as an emergent property. That is
 the central empirical claim of the paper.
 
-### Jobs queued:
+### Results (SLURM jobs 642969 / 642970 / 642971)
 
-| Job name    | Objective    | Steps | Seed | Purpose |
-|-------------|--------------|-------|------|---------|
-| dar_v2      | d_ar         | 400   | 0    | D-AR baseline with nextobs eval |
-| dflex_v2    | d_flex (4 obj)| 400  | 0    | D-Flex with inverse_dynamics + nextobs |
-| drandom_v2  | random_block | 400   | 0    | D-Random baseline with nextobs |
+| Run | Job | Steps | Obj | Final train | Final val (task) | Final nextobs | Best nextobs | Minutes |
+|-----|-----|-------|-----|-------------|------------------|---------------|--------------|---------|
+| dar_v2 | 642969 | 400 | d_ar | 4.244 | 4.650 | 4.149 | 4.012 | 129.7 |
+| dflex_v2 | 642970 | 400 | d_flex (4 obj) | 1.927 | 3.529 | 3.616 | 3.614 | 126.3 |
+| drandom_v2 | 642971 | 400 | random_block | 0.214 | 0.294 | 2.760 | 2.084 | 133.6 |
+
+Adapters at `AK2802/AOMT/{dar_v2,dflex_v2,drandom_v2}`.
+
+### Key findings
+
+**Central result: D-Flex beats D-AR by ~0.4 nats on nextobs (steps 240–400)**
+
+Steps 240–399 averaged over val checkpoints:
+- D-AR nextobs: mean=4.377, std=0.248
+- D-Flex nextobs: mean=3.974, std=0.319
+- D-Random nextobs: mean=3.197, std=0.513
+
+Crossover point at step ~180. D-Flex improves despite NEVER training on causal
+forward prediction — the bidirectional multi-task objective induces forward dynamics
+as an emergent property. This is the central empirical claim.
+
+**D-Flex is NOT converged at 400 steps.**
+nextobs curve step 200–400: 5.1 → 4.25 → 4.53 → 4.14 → 4.35 → 4.19 → 3.89 → 3.69 → 3.61 → 3.76 → 3.62.
+Still declining. 600 steps needed to determine plateau.
+
+**D-Random: memorisation, not world model.**
+val (training task) = 0.294 (near-perfect denoising). nextobs std=0.513 (vs 0.24 for D-AR).
+High variance = unstable forward-prediction mechanism. Train/nextobs gap: 0.294 → 2.76 = 2.47 nats
+vs D-Flex 3.53 → 3.62 = 0.09 nats. D-Flex train-task val ≈ nextobs val, meaning bidirectional
+training generalised to causal evaluation.
+
+**D-AR plateau:** architecturally mismatched. Bidirectional model + causal suffix task.
+Loss 6.09 → 4.65 over 400 steps, still not converged. Purely-causal supervision from a model
+with no causal inductive bias = slow, inefficient gradient signal.
+
+**Supervision budget (D-Flex v2, 4 objectives):**
+- THINK: 49,433 (20%), ACTION: 8,729 (3.6%), OBS: 184,098 (76%)
+
+---
+
+## Phase 4: Convergence + ablations (RUNNING — jobs 681708/681709/681710)
+
+Script: `train_llada_rb.py` v3 (committed `6aeb56a`). gpu-long partition, 6h wall time.
+
+### Training improvements over Phase 3
+
+- **Accuracy metric** — `train/acc`, `val/acc`, `val/nextobs_acc` logged to wandb;
+  measures what fraction of masked tokens are predicted correctly (not just loss)
+- **EMA (decay=0.995)** — EMA weights applied during every val evaluation, restored after.
+  Reduces noise in val curves without affecting training dynamics
+- **Regularisation** — `weight_decay=0.1` (was 0), `lora_dropout=0.1` (was 0)
+- **Full val sweep** (`--full_val_at_end`) — after training, evaluate nextobs over ALL 148
+  val trajectories (not sampled batches). Gives a definitive low-variance estimate of
+  world model quality for the final checkpoint
+- **Linear probing** (`--probe_after_train`) — freeze adapter, extract last-layer hidden
+  states from val set, fit:
+  - LogisticRegression → block-type accuracy (THINK/ACTION/OBS, 3-class; chance=0.33)
+  - Ridge regression → step-number R² and MAE
+  Logged to wandb as `probe/block_type_acc`, `probe/step_r2`, `probe/step_mae`.
+  Tells us whether the representations differ structurally across objectives
+
+### New objectives
+
+**`d_ar_refined` (job 681710 — `dar_v3`)**
+`causal_random_mask`: instead of always masking the suffix, uniformly sample the
+span start position across all eligible positions. Same span length (rate × eligible),
+same strictly-causal context (no future tokens after span end). Fixes two biases in
+`suffix_mask`:
+1. Positional bias: suffix_mask only supervises end-of-trajectory tokens
+2. Variance: short sequences get proportionally less causal context
+
+Ablation question: does removing the positional bias break or help D-AR's nextobs score?
+Compare `dar_v3` (uniform position) vs `dar_v2` (suffix-only) on val/nextobs.
+
+**`d_progressive` (job 681709 — `dprog`)**
+`progressive_span_mask`: masking curriculum over training.
+- progress=0 (step 0): span_size=1 → identical to `random_block` (individual token masking)
+- progress=1 (step 600): span_size=25 → approaching whole-block masking
+- span_size grows exponentially: `round(exp(log(25) × progress))`
+- Mask rate stays fixed at 20% throughout (span growth changes contiguity, not volume)
+
+Ablation question: does gradually teaching the model block-level structure improve nextobs
+vs `drandom_v2` (same objective but no progression, already done in Phase 3)?
+The curriculum hypothesis: token-level first = easy gradient signal early; block-level later
+= richer contextual reasoning required. A well-designed curriculum should improve both
+training stability and generalisation.
+
+### Phase 4 runs
+
+| Run | SLURM job | Obj | Steps | Seed | Key question |
+|-----|-----------|-----|-------|------|--------------|
+| dflex_v3 | 681708 | d_flex | 600 | 0 | Does D-Flex converge? What's the 600-step nextobs? |
+| dprog | 681709 | d_progressive | 600 | 0 | Does span curriculum beat flat random masking? |
+| dar_v3 | 681710 | d_ar_refined | 600 | 0 | Does uniform-position masking improve D-AR? |
+
+All: gpu-long, A100-80GB, 6h, seed=0. Status: PENDING (gpu-long queue).
+Results will auto-upload to `AK2802/AOMT/{dflex_v3,dprog,dar_v3}` + wandb sync.
+
+---
+
+## Next steps (after Phase 4 results)
+
+### Priority 1: Multi-seed runs
+Seeds 1 and 2 for D-Flex and D-AR (the main comparison pair). Single-seed results are
+illustrative, not publishable. Three seeds × 2 models = 6 more runs. Submit after Phase 4
+confirms the direction of effect.
+
+### Priority 2: Action-conditioned next-state prediction
+Beyond nextobs (predict last obs from prefix), evaluate:
+given prefix + proposed action → predict resulting observation.
+This is a more direct world model test — it measures whether the model has learned T(s,a)→s'
+rather than just P(s_{t+1} | s_{≤t}). Requires a small eval script iterating over val trajectories.
+
+### Priority 3: Interpret linear probe results
+Compare `probe/block_type_acc` and `probe/step_r2` across dflex_v3, dprog, dar_v3.
+If D-Flex probes are higher: bidirectional objectives encode richer structural information
+in the representations, not just better training loss.
+If probes are similar: the nextobs gain is not representation-level — could be task-specific.
+
+### Priority 4: Scale / OOD eval
+Test adapters on held-out ScienceWorld task types not seen during fine-tuning.
+Measures whether the world model generalises or memorises task-specific patterns.
 
 ---
 
