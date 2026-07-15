@@ -25,6 +25,8 @@ scales. Mixed together without normalization, they produce conflicting gradient 
 the mean achieved mask rate was ~15% instead of 20%. The loss never converged. Conclusion:
 use a single, consistent objective for the baseline. Replaced by `d_ar` (suffix masking).
 
+> By limiting to a single, consistent objective, do we limit the list of tasks that the model can handle?
+
 **Why rb_const20 val=0.278 is misleading:**
 random_block masks tokens uniformly at random — each masked token has full bidirectional
 context from all surrounding unmasked tokens. This is the easiest possible denoising task
