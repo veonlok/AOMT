@@ -46,10 +46,13 @@ def action_category(action: str, env: str) -> str:
 
 
 def _mean(xs):
+    """Arithmetic mean of ``xs``, or 0.0 for an empty sequence."""
     return sum(xs) / len(xs) if xs else 0.0
 
 
 def completion_status(rec) -> str:
+    """Best-effort success label. ScienceWorld uses the ``taxonomy`` heuristic;
+    ALFWorld/WebShop are offline demonstrations, so they're marked assumed-success."""
     if rec["env"] == "scienceworld":
         return tx.guess_completion_status({"goal": rec["goal"]}, rec["actions"], rec["observations"])
     return "assumed_success_demo"   # ALFWorld plan-only / WebShop offline logs are demonstrations
@@ -57,6 +60,10 @@ def completion_status(rec) -> str:
 
 # ------------------------------------------------------ per-trajectory metrics
 def trajectory_metrics(rec) -> dict:
+    """Flat per-trajectory metric dict for one canonical record: goal size, block
+    composition (think/action/obs counts + ratios), per-block-type char/word lengths,
+    whole-trajectory totals, repetition counts, action-type mix, interaction structure,
+    and a completion label. One row of the Section-8 granular-metrics DataFrame."""
     env, goal = rec["env"], rec["goal"]
     actions, obs, thinks = rec["actions"], rec["observations"], rec["thinks"]
     na, no, nt = len(actions), len(obs), len(thinks)
@@ -119,16 +126,21 @@ def trajectory_metrics(rec) -> dict:
 
 # ------------------------------------------------------- hashing / leakage keys
 def _sha(text: str) -> str:
+    """SHA-256 hex digest of ``text`` (utf-8 encoded)."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def full_hash(rec) -> str:
+    """Content hash of the whole trajectory (goal + actions + observations). Equal
+    hashes = byte-identical trajectories; this is the ``exact_seen`` / exact-duplicate key."""
     body = rec["goal"] + "\n" + "\n".join(
         f"A|{a}" for a in rec["actions"]) + "\n" + "\n".join(f"O|{o}" for o in rec["observations"])
     return _sha(body)
 
 
 def skeleton_hash(rec) -> str:
+    """Content hash of the action sequence alone — the 'action skeleton'. Equal hashes =
+    identical action path regardless of goal/observations (near-duplicate detection)."""
     return _sha(" || ".join(rec["actions"]))
 
 
@@ -148,6 +160,7 @@ def instance_key(rec) -> str:
 
 
 def _family(rec):
+    """Goal family of a record (thin wrapper over ``env_taxonomy.goal_family``)."""
     return et.goal_family(rec["env"], rec["goal"], rec.get("state_labels"))
 
 
@@ -189,6 +202,8 @@ def split_risk_rows(loaded) -> list:
 
 # --------------------------------------------------------- clustering / patterns
 def cluster_summary(records) -> dict:
+    """Duplication summary for one environment: counts of exact-duplicate trajectories,
+    repeated action skeletons, and shared task instances, plus their largest clusters."""
     full = Counter(full_hash(r) for r in records)
     skel = Counter(skeleton_hash(r) for r in records)
     key = Counter(instance_key(r) for r in records)
@@ -267,6 +282,8 @@ def build_grouped_split(records, key_fn, seed=0):
 
 
 def _risk_counts(train, val):
+    """Count ``val`` trajectories per leakage tier (exact/template/family/ood) against a
+    given ``train`` set — the per-protocol core reused by ``protocol_comparison``."""
     tf = {full_hash(r) for r in train}
     tk = {instance_key(r) for r in train}
     tfam = {_family(r) for r in train}
