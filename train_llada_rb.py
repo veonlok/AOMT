@@ -99,24 +99,37 @@ def load_split(path, tok, max_len):
     return examples
 
 def load_datasets(args, tok):
-    """Load one or more datasets.
-    datasets arg is comma-separated: scienceworld, textworld (alfworld+webshop), or both."""
+    """Load one or more datasets (comma-separated in --datasets).
+
+    Dataset identifiers:
+      scienceworld — data/             (1187 train / 148 val)
+      alfworld     — data/textworld/alfworld  (6574 train / 251 val, seq_len mean=2272)
+      webshop      — data/textworld/webshop   (3014 train / 377 val, seq_len mean=36 — WARNING)
+
+    NOTE: WebShop sequences average only 36 tokens (trivial for 16B model).
+          ALFWorld has action_frac=0.87% (vs ScienceWorld 6.5%) — gradient is very sparse
+          for d_ar_section on ALFWorld; consider --grad_accum 8.
+    """
+    _TW_SUBDIRS = {
+        "alfworld": "alfworld",
+        "webshop":  "webshop",
+    }
     train_all, val_all = [], []
     for ds in args.datasets.split(","):
         ds = ds.strip()
         if ds == "scienceworld":
             tr = load_split(os.path.join(args.data_dir, "train.jsonl"),      tok, args.max_len)
             vl = load_split(os.path.join(args.data_dir, "validation.jsonl"), tok, args.max_len)
-        elif ds in ("textworld", "alfworld", "webshop"):
-            tw_dir = args.data_dir_tw
-            if not os.path.isfile(os.path.join(tw_dir, "train.jsonl")):
+        elif ds in _TW_SUBDIRS:
+            sub = os.path.join(args.data_dir_tw, _TW_SUBDIRS[ds])
+            if not os.path.isfile(os.path.join(sub, "train.jsonl")):
                 raise FileNotFoundError(
-                    f"TextWorld data not found at {tw_dir}.\n"
-                    f"Run:  python fetch_textworld_data.py  (requires HF login & dataset access)")
-            tr = load_split(os.path.join(tw_dir, "train.jsonl"),      tok, args.max_len)
-            vl = load_split(os.path.join(tw_dir, "validation.jsonl"), tok, args.max_len)
+                    f"{ds} data not found at {sub}.\n"
+                    f"Run: python fetch_textworld_data.py")
+            tr = load_split(os.path.join(sub, "train.jsonl"),      tok, args.max_len)
+            vl = load_split(os.path.join(sub, "validation.jsonl"), tok, args.max_len)
         else:
-            raise ValueError(f"Unknown dataset: {ds}. Choose from: scienceworld, textworld")
+            raise ValueError(f"Unknown dataset: {ds!r}. Choose from: scienceworld, alfworld, webshop")
         print(f"[data] {ds}: train={len(tr)} val={len(vl)}")
         train_all.extend(tr); val_all.extend(vl)
     return train_all, val_all

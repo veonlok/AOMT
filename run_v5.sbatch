@@ -6,27 +6,31 @@
 #SBATCH --mem=96G
 #SBATCH --time=06:00:00
 #SBATCH --output=runs/%x_%j.out
-# Usage: sbatch -J <run_name> run_v5.sbatch <run_name> <obj_set> <sched> [steps] [seed] [prog_exp]
+# Usage: sbatch -J <name> run_v5.sbatch <name> <obj> <sched> [steps] [seed] [prog_exp] [mask_rate] [datasets] [grad_accum]
 # Examples:
-#   sbatch -J dar_section  run_v5.sbatch dar_section  d_ar_section  constant 800 0 1.0
-#   sbatch -J dprog_med    run_v5.sbatch dprog_med    d_progressive constant 800 0 2.0
-#   sbatch -J dprog_slow   run_v5.sbatch dprog_slow   d_progressive constant 800 0 3.0
+#   sbatch -J dar_section     run_v5.sbatch dar_section     d_ar_section  constant 800 0 1.0 0.20 scienceworld 4
+#   sbatch -J dprog_med       run_v5.sbatch dprog_med       d_progressive constant 800 0 2.0 0.20 scienceworld 4
+#   sbatch -J dprog_med_act   run_v5.sbatch dprog_med_act   d_progressive constant 800 0 2.0 0.065 scienceworld 4
+#   sbatch -J dar_section_alf run_v5.sbatch dar_section_alf d_ar_section  constant 800 0 1.0 0.20 alfworld 8
 set -e
 RUN=$1; OBJ=$2; SCHED=$3; STEPS=${4:-800}; SEED=${5:-0}; PROG_EXP=${6:-1.0}
+MASK_RATE=${7:-0.20}; DATASETS=${8:-scienceworld}; GRAD_ACCUM=${9:-4}
 
 cd $HOME/dflex_proj
 source .venv/bin/activate
 export HF_HOME=$HOME/dflex_proj/hf TMPDIR=$HOME/dflex_proj/tmp HF_HUB_OFFLINE=1 PYTHONUNBUFFERED=1
 mkdir -p runs "$TMPDIR"
-echo "host=$(hostname) run=$RUN obj=$OBJ sched=$SCHED steps=$STEPS seed=$SEED prog_exp=$PROG_EXP"
+echo "host=$(hostname) run=$RUN obj=$OBJ sched=$SCHED steps=$STEPS seed=$SEED prog_exp=$PROG_EXP mask_rate=$MASK_RATE datasets=$DATASETS grad_accum=$GRAD_ACCUM"
 nvidia-smi -L
 
 python train_llada_rb.py \
   --run_name "$RUN" --objective_set "$OBJ" --mask_schedule "$SCHED" \
-  --mask_rate 0.20 --steps "$STEPS" --grad_accum 4 --batch_size 1 --max_len 8192 \
+  --mask_rate "$MASK_RATE" --steps "$STEPS" --grad_accum "$GRAD_ACCUM" \
+  --batch_size 1 --max_len 8192 \
   --lr 1e-4 --weight_decay 0.1 --lora_dropout 0.1 --ema_decay 0.995 \
   --prog_exponent "$PROG_EXP" --prog_max_span 25 \
   --val_every 20 --val_batches 15 --seed "$SEED" \
+  --datasets "$DATASETS" --data_dir data --data_dir_tw data/textworld \
   --full_val_at_end \
   --out_dir "runs/$RUN" --wandb_mode offline
 
