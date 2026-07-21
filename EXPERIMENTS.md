@@ -281,24 +281,147 @@ Results will auto-upload to `AK2802/AOMT/{dflex_v3,dprog,dar_v3}` + wandb sync.
 
 ---
 
-## Next steps (after Phase 4 results)
+## Phase 5: d_ar_section vs progressive curriculum ablations (RUNNING)
 
-### Priority 1: Multi-seed runs
-Seeds 1 and 2 for D-Flex and D-AR (the main comparison pair). Single-seed results are
-illustrative, not publishable. Three seeds × 2 models = 6 more runs. Submit after Phase 4
-confirms the direction of effect.
+Script: `train_llada_rb.py` v4 (commit `4280b41`). gpu-long, 6h, 800 steps.
+Cancelled: dflex_v3, dar_v3 (dropped D-Flex; d_ar_refined superseded by d_ar_section).
 
-### Priority 2: Action-conditioned next-state prediction
+### Key analysis informing this phase
+
+**Data statistics (ScienceWorld, 500 trajectories):**
+- Seq length: mean=1190, median=1156, p90=1784 tokens
+- Steps per traj: mean=30.5 (long multi-step reasoning chains)
+- Action tokens per block: mean=4.8, **median=4** (extremely short — "go north", "pick up knife")
+- Block run lengths: median=12, p75=24, p90=38 tokens → max_span=25 covers 75th percentile
+- **Action fraction: 6.53% of eligible tokens** (~73 action tokens per 1190-token trajectory)
+
+**Think-action leakage check:** Think blocks do NOT directly telegraph actions.
+"I need to locate the metal pot" → "look around" (generic exploration).
+"I've spotted a turtle egg" → "focus on egg turtle" (requires reasoning, not copying).
+d_ar_section is genuinely challenging despite think being context.
+
+### New objectives
+
+**`d_ar_section`** (SLURM 691116 — `dar_section`):
+`all_action_mask`: mask ALL action tokens (n=4-8 per step × 15 steps ≈ 73 tokens/traj).
+Context = goal + think + obs, bidirectionally. No rate parameter — automatic ~6.5%.
+
+Alignment with LLaDA inference: at inference time you would set all action tokens to MASK
+and run one denoising pass over the full trajectory. This is exactly the training task.
+
+Comparison vs Phase 3 d_ar (suffix masking): d_ar scores the last 20% of the trajectory
+(~210 tokens, many are obs tokens). d_ar_section scores only action tokens (73 tokens) but
+these are the tokens that matter for downstream task performance. The supervision signal is
+denser in semantic content per scored token.
+
+**`d_progressive` — curriculum speed ablation:**
+Three runs compare how fast the span grows, with identical 20% mask rate and max_span=25:
+
+| Run | Job | Exponent | Span at halfway (step 400) | Span at p25 (step 200) |
+|-----|-----|----------|--------------------------|------------------------|
+| dprog (Phase 4) | 681709 | 1.0 (fast) | 5 | 2 |
+| dprog_med | 691117 | 2.0 (medium) | 2 | 1 |
+| dprog_slow | 691118 | 3.0 (slow) | 1.5 | 1 |
+
+Hypothesis: slower curriculum (more time at token-level masking) builds stronger local
+representations before moving to harder span prediction, improving nextobs/nextaction
+generalisation. Or: too much time at token-level could be wasteful / converge slower.
+
+Verified with masking visualisation (`--show_samples 2`) before submitting:
+- d_ar_section: all action blocks correctly masked, no think/obs scored, 30/30 examples correct
+- d_progressive at exponent=1.0: clear span progression from single tokens → large chunks
+- d_progressive at exponent=2.0: stays at token-level much longer (span=2 at halfway vs span=5)
+
+### New evaluation metrics (all Phase 5 onwards)
+
+**`val/nextaction_loss`** — predict last action block from causal prefix.
+Symmetric to val/nextobs (world model). nextaction tests policy quality.
+Expected: d_ar_section should excel here (its training task is exactly this).
+Expected: d_progressive is trained agnostically (equal chance of scoring action vs obs vs think).
+
+**`train/tok_f1` / `val/tok_f1`** — unigram token-bag F1 (SQuAD-style).
+Partial credit: "pick up metal pot" vs "pick up pot" = 0.8 F1, not 0 exact match.
+Better reflects semantic correctness for short action sequences.
+
+### TextWorld datasets
+
+Dataset: `Joshyxwa/cp2107-textworld-trajectories` (downloaded to `data/textworld/`).
+
+**ALFWorld stats:**
+- 6574 train / 251 val / 255 test trajectories
+- Seq length: mean=2272 tokens (~2× ScienceWorld)
+- Action fraction: **0.87%** (extremely sparse — ~20 action tokens per trajectory)
+- Block order: Obs(N) → Think(N) → Action(N) (reversed from ScienceWorld; position-based masking handles both)
+- grad_accum=8 required for ALF runs to reduce gradient variance from ~80 scored tokens/step
+
+**WebShop stats (EXCLUDED):**
+- 3014 train / 251 val / 255 test
+- Seq length: mean=36 tokens — trivially short for a 16B model, no meaningful signal
+- Action fraction: 62.5%, no Think blocks
+- Decision: excluded from all Phase 5+ training runs
+
+**Combined SW+ALF:** 1187+6574=7761 train / 148+251=399 val.
+Provides cross-domain diversity: ALF's dense multi-step navigation vs SW's long reasoning chains.
+
+### Phase 5 run matrix (9 runs total)
+
+**ScienceWorld — mask rate 20%** (main ablation):
+
+| Run | SLURM | Obj | Exp | Steps | Key question |
+|-----|-------|-----|-----|-------|--------------|
+| dar_section | 691116 | d_ar_section | N/A | 800 | Causal baseline: all-action masking, LLaDA-aligned |
+| dprog (Phase 4) | 681709 | d_progressive | 1.0 (fast) | 600 | Fast curriculum reference (Phase 4 holdover) |
+| dprog_med | 691117 | d_progressive | 2.0 (med) | 800 | Slower span growth — more token-level early |
+| dprog_slow | 691118 | d_progressive | 3.0 (slow) | 800 | Slowest span growth — token-level dominant |
+
+**ScienceWorld — mask rate 6.5%** (action-rate match to dar_section):
+
+| Run | SLURM | Obj | Exp | Steps | Key question |
+|-----|-------|-----|-----|-------|--------------|
+| dprog_fast_act | 691128 | d_progressive | 1.0 | 800 | Fast, action-rate → vs dar_section (same rate) |
+| dprog_med_act | 691129 | d_progressive | 2.0 | 800 | Medium, action-rate → isolate mask_rate from span effect |
+| dprog_slow_act | 691130 | d_progressive | 3.0 | 800 | Slow, action-rate → does sparse masking help? |
+
+**ALFWorld (grad_accum=8):**
+
+| Run | SLURM | Obj | Exp | Steps | Key question |
+|-----|-------|-----|-----|-------|--------------|
+| dar_section_alf | 691131 | d_ar_section | N/A | 800 | Does causal masking scale to very sparse action signal? |
+| dprog_med_alf | 691132 | d_progressive | 2.0 | 800 | Cross-domain: does SW-tuned curriculum generalise? |
+
+**Cross-domain:**
+
+| Run | SLURM | Obj | Exp | Steps | Key question |
+|-----|-------|-----|-----|-------|--------------|
+| dar_section_combined | 691133 | d_ar_section | N/A | 800 | Combined SW+ALF: does more data diversity help? |
+
+Status: dar_section RUNNING (xgph2), all others PENDING.
+All results auto-upload to `AK2802/AOMT/{run_name}` and wandb sync after completion.
+
+---
+
+## Next steps (after Phase 5 results)
+
+### Priority 1: Analyse Phase 5 run matrix
+Key comparisons to make from the 9-run matrix:
+- **Causal vs Progressive at 20% rate**: dar_section vs dprog_{fast,med,slow} — does causal masking
+  outperform on val/nextaction? Expected: yes (dar_section's training task is exactly nextaction eval).
+- **Curriculum speed** at 20%: dprog_fast vs dprog_med vs dprog_slow — is there a sweet spot?
+- **Action-rate progressive** (6.5%) vs causal: dprog_{fast,med,slow}_act vs dar_section —
+  with equal token budget, does causal supervision structure outperform span-random?
+- **Rate interaction**: dprog_med (20%) vs dprog_med_act (6.5%) — rate effect within same objective.
+- **ALFWorld transfer**: dar_section_alf + dprog_med_alf — can models trained on ALFWorld's
+  extremely sparse signal (0.87% action tokens) still converge? Compare to SW counterparts.
+- **Cross-domain benefit**: dar_section_combined vs dar_section — does joint SW+ALF training help?
+
+### Priority 2: Multi-seed runs
+Best-performing objective (likely dar_section) needs seeds 1 and 2 for publishable error bars.
+Single-seed results illustrative only. Submit 2 more runs after Phase 5 analysis.
+
+### Priority 3: Action-conditioned next-state prediction
 Beyond nextobs (predict last obs from prefix), evaluate:
 given prefix + proposed action → predict resulting observation.
-This is a more direct world model test — it measures whether the model has learned T(s,a)→s'
-rather than just P(s_{t+1} | s_{≤t}). Requires a small eval script iterating over val trajectories.
-
-### Priority 3: Interpret linear probe results
-Compare `probe/block_type_acc` and `probe/step_r2` across dflex_v3, dprog, dar_v3.
-If D-Flex probes are higher: bidirectional objectives encode richer structural information
-in the representations, not just better training loss.
-If probes are similar: the nextobs gain is not representation-level — could be task-specific.
+This is a more direct T(s,a)→s' world model test. Requires a small eval script.
 
 ### Priority 4: Scale / OOD eval
 Test adapters on held-out ScienceWorld task types not seen during fine-tuning.
