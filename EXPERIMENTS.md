@@ -187,6 +187,26 @@ the central empirical claim of the paper.
 | dflex_v2    | d_flex (4 obj)| 400  | 0    | D-Flex with inverse_dynamics + nextobs |
 | drandom_v2  | random_block | 400   | 0    | D-Random baseline with nextobs |
 
+### Evaluation preflight: production tokenizer parity
+
+- Date: 2026-07-22
+- Adapter repository: `AK2802/AOMT` at
+  `08ea2b99f87930da86b58d176ae5b48ef96e5528`
+- Matched adapters: `dar_v2`, `drandom_v2`, `dflex_v2`; all seed 0
+- Base repository: `inclusionAI/LLaDA2.0-mini` at
+  `dad945cac317da394b390f82c7b40691d8a881ed`
+- Dataset revision: `Joshyxwa/cp2107-textworld-trajectories` at
+  `b01efa47595f21a8c5555f04633c13172c364079`
+- Result: 148 checked, 0 dropped, 0 mismatches; parity passed
+- Artifact: `runs/evaluation-suite-v1/parity-scienceworld-v1.json`
+- Model manifest: `models/AOMT/model-manifest.json`
+
+All 13 LoRA adapters in the repository are downloaded locally and validated; the three listed
+above remain the matched primary comparison. Full checkpoint evaluation was not launched on this
+Windows host because the base weights are separate (32,513,122,504 bytes across seven shards)
+and no NVIDIA runtime is available. This is an infrastructure boundary, not an evaluation
+exclusion; the recorded revisions and suite command are ready for the GPU cluster.
+
 ---
 
 ## Key methodological notes

@@ -20,7 +20,7 @@ timeout 6 curl -sI https://api.wandb.ai >/dev/null 2>&1 \
   && echo "compute egress: YES" || echo "compute egress: NO (wandb stays offline; sync from login node later)"
 
 python train_dflex.py \
-  --data_dir data --out_dir runs/dflex_full \
+  --data_dir cp2107-textworld-trajectories/scienceworld-compact-v2 --out_dir runs/dflex_full \
   --steps 3000 --batch_size 16 --max_len 1024 \
   --d_model 512 --layers 6 --nhead 8 --lr 3e-4 \
   --val_every 150 --run_name D-Flex-scienceworld \

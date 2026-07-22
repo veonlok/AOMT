@@ -10,3 +10,5 @@ __pycache__/
 *.pyc
 *.pyo
 *.pt
+models/LLaDA2.0-mini/
+models/**/adapter_model.safetensors

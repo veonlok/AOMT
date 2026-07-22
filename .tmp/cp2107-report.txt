@@ -1,0 +1,655 @@
+    Flexible Masking Strategies for Diffusion Language
+                         Models
+         Extracting Implicit Text-World Models via Flexible Trajectory Masking
+                        Independent Research Proposal – Summer 2026
+
+
+               Arnav Kamath        Joshua Wong       Veon Lok      David Valante
+
+
+
+1     Overview, Question, and Scope
+Offline learning for language-model agents is usually trained with a causal autoregressive fac-
+torisation: given a left-to-right history, the model is supervised to predict the next token or
+next action. That objective is simple and effective, but it uses only one conditional view of each
+trajectory. A single interaction trace also contains other conditional learning problems: predict-
+ing the next observation from the past, inferring the action that caused a state change, filling
+in missing intermediate steps, retrodicting earlier state from later consequences, and repairing
+corrupted observations.
+Masked Trajectory Models (MTM) [1] and UniMASK [2] show that, in sequential decision
+problems, different masks over the same trajectory instantiate different inference tasks. This
+proposal studies whether the same principle can be made useful for text-agent trajectories when
+the substrate is a masked diffusion language model (MDLM) [3, 4]. The core object of study is
+not diffusion language modelling in general; it is the masking strategy used to train the diffusion
+backbone.
+The central hypothesis is narrow: flexible, block-wise, heteromodal masking over text-agent tra-
+jectories should produce more transferable world-model-like representations than causal masking
+or naive random masking, when the diffusion substrate and supervision budget are held fixed.
+The project does not claim to solve general world modelling. It tests a limited claim in text en-
+vironments with explicit, verifiable dynamics: ScienceWorld [14], ALFWorld [13], and WebShop
+[15]. The decisive comparison is between two models using the same diffusion checkpoint and
+the same optimisation budget. D-AR uses a diffusion backbone restricted to causal prefix-to-
+suffix conditioning. D-Flex uses the same backbone but trains on a mixture of forward, inverse,
+retrodictive, imputation, and denoising masks over typed trajectory blocks. If D-Flex improves
+out-of-distribution dynamics prediction, latent state recovery, and counterfactual consistency
+relative to D-AR, the evidence points to the masking strategy rather than merely to the diffusion
+substrate.
+
+1.1   Research Questions
+ 1. Does flexible block-wise masking on a masked diffusion language model produce a smaller
+    in-distribution to out-of-distribution generalisation gap than causal masking on the same
+    diffusion substrate?
+
+ 2. Does flexible masking improve action-conditioned next-state prediction, counterfactual con-
+    sistency, and latent-state decodability compared with causal masking and naive random
+    masking?
+
+
+
+                                                1
+ 3. Is any observed gain attributable specifically to masking and reconstructing environmental
+    observations, rather than to extra supervision, easier targets, longer context, or the diffusion
+    backbone itself?
+
+ 4. How do the effects differ across environment types: scientific rule dynamics in ScienceWorld,
+    household physical dynamics in ALFWorld, and attribute/search dynamics in WebShop?
+
+1.2   Operational Definition
+In this proposal, an implicit text-world model is not defined as a complete representation of the
+external world. It is defined operationally. A model has a stronger implicit text-world model for
+a given environment if, under held-out configurations and interventions, it satisfies the following
+criteria better than matched baselines:
+
+ • it predicts action-conditioned next observations and state variables from interaction history;
+
+ • it maintains coherent latent representations of task-relevant state, such as inventory, object
+   locations, achieved subgoals, and catalogue constraints;
+
+ • it responds correctly to valid counterfactual edits, such as removing a prerequisite object or
+   changing a rule condition;
+
+ • it recovers from corrupted or inconsistent trajectory fragments without peeking at future
+   ground truth;
+
+ • it improves or preserves task success on out-of-distribution splits.
+
+This definition keeps the claim testable. A positive result would show evidence for world-model-
+like structure in a controlled text-agent setting. It would not show that the model has a general,
+human-like, or open-ended model of the world.
+
+1.3   Positioning
+Masking as multi-task supervision. MTM [1] reconstructs masked state, action, and re-
+turn tokens from arbitrary subsets of a trajectory, allowing the same network to act as a forward
+dynamics model, inverse dynamics model, and policy. UniMASK [2] frames behaviour cloning,
+offline reinforcement learning, inverse dynamics, and waypoint conditioning as different masking
+patterns over a shared sequence model. Fill-in-the-middle training [8] shows that even autore-
+gressive systems can benefit from nonstandard infilling factorisations, though causal attention
+limits the available conditioning structure. This project adapts the masking-as-multitask idea
+to typed text-agent trajectories.
+
+Masked diffusion language models. MDLM [3] reduces discrete masked diffusion training
+to a Rao-Blackwellised mixture of masked-language-modelling losses. LLaDA [4] scales diffusion
+language modelling to large transformer backbones with strong bidirectional behaviour. ProS-
+eCo [9] studies correction during masked diffusion generation, addressing the problem that once
+tokens are unmasked, standard masked diffusion samplers can accumulate errors. This project
+uses masked diffusion because denoising and bidirectional reconstruction are natural tools for
+probing trajectory consistency. It does not assume that diffusion models are already good agent
+backbones.
+
+
+
+
+                                                 2
+Implicit world models in sequence models. Othello-GPT [5] and follow-up probe work
+[6] show that sequence models can learn latent state representations in synthetic domains.
+Recent work on text-based world models [10] studies when language models can serve as next-
+state predictors in interactive text environments. At the same time, diffusion language models
+have shown weaknesses in agentic workflows: recent evaluations report failures in branching
+under temporal feedback and in preserving symbolic precision [11]. This proposal therefore
+asks a targeted question: can trajectory-specific masking supply world-model supervision that
+a generic diffusion language model lacks?
+
+
+2     Task, Data, and Trajectory Representation
+2.1   Environments
+The project evaluates all main conditions and ablations across three environment families. Each
+environment has a distinct form of dynamics, so results are analysed both jointly and separately
+by environment type.
+
+ Environment       Dynamics type                   OOD split                      World-model mea-
+                                                                                  surements
+ ScienceWorld      Scientific rules, object        held-out object                next-observation
+                   properties, multi-step          configurations, unseen rule    prediction,       rule-
+                   procedures                      combinations, unseen task      consistent counterfac-
+                                                   variants                       tuals, inventory and
+                                                                                  subgoal probes
+ ALFWorld          Household physical              held-out layouts, object       object-location
+                   dynamics, object                placements,                    probes, action pre-
+                   permanence, affordances         receptacle/object              condition prediction,
+                                                   combinations, goal             physical counterfactu-
+                                                   templates                      als
+ WebShop           Attribute matching,             held-out product categories,   attribute-state
+                   catalogue search, goal          catalogue distributions,       probes,          next-
+                   constraints, product            attribute combinations         page/next-
+                   comparison                                                     observation        pre-
+                                                                                  diction,    constraint-
+                                                                                  satisfaction counter-
+                                                                                  factuals
+
+ScienceWorld is the primary scientific-dynamics benchmark because its rule structure makes
+world modelling directly testable. ALFWorld tests whether the same masking strategy helps
+with grounded household dynamics and object permanence. WebShop tests whether benefits
+transfer to search and attribute-matching dynamics, where the environment is less physical but
+still stateful.
+
+2.2   Trajectory Data
+Primary trajectories are drawn from released ETO trajectories [12] and compatible public agent-
+trajectory corpora where available. The project reuses existing trajectories rather than generat-
+ing a large new interaction dataset. This keeps the focus on the training objective and masking
+strategy.
+Each trajectory is represented as a sequence of typed semantic blocks:
+
+                                       x0 = (g, b1 , b2 , . . . , bN ),
+
+
+                                                      3
+where g is the task or goal specification and each block bi has a type in
+
+                                {Think, Action, Observation}.
+
+When simulator metadata is available, the trajectory is also aligned to structured state labels
+such as inventory, object locations, achieved subgoals, current room, product attributes, or valid
+action preconditions. These labels are never used as generation targets in the main language-
+model loss; they are used for evaluation probes and state-level metrics.
+
+2.3   Leakage Controls
+Reasoning traces can leak future state if they were generated after the trajectory or if they
+contain summaries of later observations. Therefore, all Think blocks are audited by position.
+The main experiments include Think blocks only when they are temporally valid. A dedicated
+ablation compares training with Think blocks retained, masked, and removed. State probes
+are evaluated on histories where the probed variable is not trivially present in the immediately
+visible observation text.
+
+
+3     Model Conditions
+The main scientific contrast is D-AR versus D-Flex, because both use the same diffusion sub-
+strate. AR-SFT anchors the comparison to the status quo. D-Random tests whether generic
+random masking is enough. AR-FullSeq is an additional diagnostic control introduced to sepa-
+rate “observation reconstruction helps” from “flexible masking helps”.
+
+ Condition       Substrate and objective                     Scientific role
+ AR-SFT          size-matched autoregressive                 status-quo behavioural-cloning reference
+                 backbone; causal next-action or
+                 action-token loss
+ AR-FullSeq      same autoregressive backbone                diagnostic control for full-sequence causal su-
+                 family; causal next-token loss over         pervision
+                 the full typed trajectory, including
+                 goals, Think blocks, actions, and
+                 observations
+ D-AR            diffusion backbone; prefix context          within-substrate causal baseline; isolates
+                 and suffix target; causal                   masking strategy from diffusion substrate
+                 information flow and left-to-right
+                 or semi-autoregressive unmasking
+ D-Random        same diffusion backbone; naive              tests whether generic bidirectional masking is
+                 token-level random masking with             sufficient
+                 no typed block structure and no
+                 heteromodal propensities
+ D-Flex          same diffusion backbone;                    proposed flexible masking method
+                 block-wise, heteromodal,
+                 curriculum-scheduled mixture of
+                 trajectory masks
+
+AR-FullSeq denotes a standard autoregressive model trained on the complete trajectory se-
+quence rather than only on action tokens. If a trajectory is written as
+x0 = (g, Think1 , a1 , o1 , Think2 , a2 , o2 , . . .), AR-FullSeq optimises the causal factorisation
+                                                  L
+                                                  Y
+                                     pθ (x0 ) =         pθ (xi0 | x<i
+                                                                   0 ).
+                                                  i=1
+
+
+                                                    4
+It is therefore asked to model observations as well as actions, but only from left-to-right context.
+This is the intuition behind the baseline: AR-SFT answers “can a standard behavioural-cloning
+agent choose good actions?”, while AR-FullSeq answers “if a causal autoregressive model is also
+trained to predict the environment text, does flexible masking still add anything?” If D-Flex
+beats AR-SFT but not AR-FullSeq, the gain may come mainly from observation supervision.
+If D-Flex beats AR-FullSeq on next-state prediction, counterfactual consistency, or latent-state
+probes, the evidence is stronger that bidirectional and heteromodal masking supplies a different
+kind of world-model signal rather than simply more supervised observation tokens.
+AR-SFT versus diffusion conditions is not a clean substrate comparison because the base mod-
+els differ. The cleanest claim comes from D-AR versus D-Flex. AR-FullSeq is reported to
+ensure that D-Flex is not merely benefiting from being asked to predict observations while the
+autoregressive baseline is not.
+
+
+4    Masking Objectives
+Flexible masking defines a mixture of conditional distributions over a trajectory. Each mask
+specifies a context set C and a reconstruction target set R. The target set R is used instead of
+T to avoid overloading T , which denotes trajectory horizon in other contexts.
+
+ Objective          Target R                  Context C                   D-AR?       Capability
+ Next action        action block at           goal and causal prefix      yes         policy
+                                              (o1:t , a1:t−1 )                        imitation
+ Next               observation block         goal and causal prefix      yes         forward
+ observation        ot+1                      (o1:t , a1:t )                          dynamics
+ Future from        future action and         prefix through t            yes         long-
+ past               observation blocks                                                horizon
+                    after t                                                           rollout
+ Full trajectory    most trajectory           start state, goal, and      partly      planning-
+ completion         blocks                    sparse anchors                          style
+                                                                                      completion
+ Inverse            action block at           surrounding                 no          action-effect
+ dynamics                                     observations (ot , ot+1 )               inference
+ Retrodiction       earlier blocks before t   later suffix blocks         no          backward
+                                                                                      state
+                                                                                      inference
+ Intermediate       middle span of            past and future anchors     no          temporal
+ imputation         actions and                                                       consistency
+                    observations
+ Observation        corrupted                 neighbouring valid          no          repair and
+ denoising          observation block         blocks and goal                         robustness
+ Goal-              action block or plan      goal/subgoal plus           partly      subgoal-
+ conditioned        span                      partial trajectory                      conditioned
+ action                                                                               policy
+
+
+The first three objectives can be learned under causal information flow and therefore do not by
+themselves justify flexible bidirectional masking. The objectives that specifically test flexible
+masking are inverse dynamics, retrodiction, intermediate imputation, and observation denoising,
+because they require conditioning on future or surrounding context. The strongest expected
+
+                                                 5
+world-model signal is not merely better text reconstruction; it is better action-conditioned state
+prediction and better intervention response.
+
+
+5     Training Objective
+Let x0 = (x10 , . . . , xL
+                         0 ) be a tokenised trajectory. For a sampled mask objective, positions are
+partitioned into a clean context set C and a target set R, with C ∩ R = ∅. Context tokens are
+clamped to their clean values. Target tokens undergo the masked diffusion corruption process.
+For i ∈ R,
+                    qt (xit | xi0 ) = αt δxi (xit ) + (1 − αt )δm (xit ), α0 = 1, α1 = 0,
+                                   0
+
+where m is the mask token and αt decreases with diffusion time.
+The conditional denoising loss is evaluated only on target positions and conditions on clean
+context plus corrupted target tokens, not on the clean target itself:
+                                               "                                           #
+                                                      X
+                                                         i            i    C    R
+                                                                                         
+           L(θ; C, R) = Et∼p(t) ExR         R
+                                  t ∼qt (·|x )
+                                                 λ(t)   st − log pθ (x0 | x0 , xt , t, i) .
+                                           0
+                                                      i∈R
+
+Here λ(t) and sit denote the standard MDLM time and Rao-Blackwellised scoring weights. The
+important point is that the model receives the clean context xC  0 , the noised or masked target
+      R                                                  R
+view xt , and the diffusion time t; it does not receive x0 as conditioning information.
+D-Flex trains on a mixture of these conditional denoising objectives, similar in spirit to mixture-
+of-denoisers training in UL2 [7]:
+
+                          LFlex (θ) = Ez∼π(z) E(C,R)∼qz (C,R) [L(θ; C, R)] ,
+
+where z indexes the objective type and π(z) is the mixture prior over masking objectives. This
+is a multi-task objective over many conditionals. It should not be described as a lower bound
+on one single joint density p(x0 ), except in special cases where the masking process recovers
+the standard unconditional MDLM objective. The world-model hypothesis is that parameter
+sharing across many compatible conditionals encourages an internally consistent representation
+of environment dynamics.
+
+5.1   Baseline Objectives as Restrictions
+D-AR restricts C to causal prefixes and R to suffix or next-block targets. It therefore cannot
+condition on future observations when predicting earlier actions or states. If suffix tokens are
+predicted in parallel, D-AR is not exactly a standard autoregressive factorisation; it is a causal
+conditional denoiser. This distinction is reported explicitly. The external AR-SFT and AR-
+FullSeq baselines provide true causal autoregressive references.
+D-Random samples target tokens independently and uniformly, with no typed block constraints
+and no per-type masking propensities. Its unmasked tokens form bidirectional context, so
+it is a strong generic masked baseline rather than an empty-context baseline. D-Flex differs
+from D-Random by using semantic blocks, environment/action/observation types, curriculum
+scheduling, and explicit objective mixtures.
+
+
+6     Supervision and Compute Controls
+Flexible masking can turn one trajectory into many supervised views. Without controls, D-
+Flex could win simply by receiving more loss-bearing targets. The primary matched-supervision
+regime holds the following quantities fixed across conditions wherever possible:
+
+                                                  6
+ • the pool of unique trajectories;
+
+ • total gradient steps;
+
+ • batch token count;
+
+ • expected number of loss-bearing token positions per trajectory per epoch;
+
+ • target-type proportions across Action, Observation, Think, and Goal blocks;
+
+ • context-length distribution;
+
+ • evaluation prompts and decoding budget.
+
+For a trajectory of length L, an autoregressive full-sequence pass supervises approximately L
+positions. A flexible masked view with expected target fraction r̄ supervises approximately r̄L
+positions. With k resampled views per trajectory, matched full-sequence supervision sets
+
+                                             kr̄ ≈ 1.
+
+For example, if r̄ = 0.33, then k ≈ 3. For an action-only baseline, the comparable target count
+is the action-token fraction rather than the full sequence length. This is why AR-FullSeq is
+reported alongside AR-SFT.
+Equal target count still does not guarantee equal information content. Observation tokens may
+be easier or harder than action tokens, future context may reduce entropy, and some targets
+may be nearly templated. Therefore the analysis reports target entropy proxies, block-type
+proportions, mean context length, and reconstruction difficulty by block type. The primary
+D-AR versus D-Flex comparison is interpreted together with these diagnostics.
+
+
+7     Incremental Masking Curriculum
+D-Flex uses an incremental masking curriculum. Training begins with low target ratios, around
+10 percent, where reconstruction is local and stable. The target ratio then ramps toward higher
+ratios, around 50 to 70 percent, where the model must use longer-range structure rather than
+nearby token copying.
+The endpoint is empirical rather than assumed. The experiment reports performance at 30,
+50, and 70 percent ceilings, along with reconstruction loss, OOD dynamics metrics, and failure
+modes. A fixed-ratio baseline is included to test whether the curriculum itself matters or whether
+the final mask distribution is sufficient.
+
+
+8     Evaluation Plan
+8.1   Task Success: ID and OOD
+Task success is measured on in-distribution and out-of-distribution splits for ScienceWorld,
+ALFWorld, and WebShop. The main behavioural metric is the OOD gap:
+
+                                      ∆OOD = SID − SOOD ,
+
+where S is the environment-specific success or reward score. A smaller OOD gap is evidence
+of better transfer only when absolute OOD performance is also competitive. A model that
+performs poorly everywhere can have a small gap for the wrong reason.
+
+
+                                                7
+8.2   Action-Conditioned Next-State Prediction
+The primary world-model metric is action-conditioned next-state prediction. Given history ht
+and action at , the model predicts the next observation or structured state:
+                                      ôt+1 ∼ pθ (ot+1 | ht , at ).
+Evaluation compares predicted observations to simulator observations and, where available,
+predicted structured state variables to ground-truth state labels. Text similarity is not sufficient;
+the analysis prioritises state-level correctness, valid preconditions, object changes, and rule-
+consistent consequences.
+Closed-loop rollouts evaluate horizons 3, 5, and 10. The model’s own predicted observations are
+fed back into subsequent prediction steps. No future ground-truth observation is used as context
+during closed-loop evaluation. This prevents inpainting from being mistaken for simulation.
+
+8.3   Counterfactual Consistency
+Counterfactual tests introduce valid off-manifold edits and ask whether predicted dynamics
+change appropriately. Examples include removing a prerequisite object in ScienceWorld, moving
+a household object in ALFWorld, or altering a product constraint in WebShop. The edited state
+is supplied as context, and the model must predict the consequence of an action under the edited
+state.
+Counterfactuals are generated through environment-valid transformations whenever possible.
+Invalid or ambiguous edits are excluded. This matters because a model should not be penalised
+for failing to resolve a counterfactual that the simulator itself does not define.
+
+8.4   Latent-State Probes
+Linear probes are trained on frozen hidden activations to decode ground-truth state variables.
+Probe targets include inventory, object location, achieved subgoals, physical preconditions, cat-
+alogue constraints, and task-relevant flags. Probe inputs are taken from histories where the
+target variable is not trivially visible in the final observation string.
+Probe baselines include bag-of-words features, frozen pretrained checkpoints before trajectory
+fine-tuning, shuffled labels, and layer-wise comparisons. Probe results are interpreted as diag-
+nostic evidence, not proof. High linear decodability can indicate state tracking, but it can also
+reflect textual shortcuts.
+
+8.5   Corruption Recovery and ProSeCo-Style Correction
+The corruption-recovery evaluation injects impossible observations, invalid actions, deleted
+steps, and inconsistent state descriptions into trajectories. Models are scored by recovery rate,
+steps to return to coherent dynamics, and post-corruption rollout quality.
+Standard iterative diffusion decoding is compared with one-shot mask prediction and ProSeCo-
+style corrective refinement. ProSeCo-style correction is treated as a decoding and sampling
+ablation, not as part of the core D-Flex claim. If correction improves D-Flex, the analysis
+separates gains from training masks and gains from inference-time revision.
+
+8.6   Dataset-Specific Analysis
+Each environment receives both shared metrics and type-specific analyses. ScienceWorld anal-
+ysis focuses on rule consistency, scientific preconditions, and unseen rule combinations. ALF-
+World analysis focuses on object permanence, location tracking, receptacle relations, and action
+
+                                                   8
+affordances. WebShop analysis focuses on attribute constraints, product-ranking state, search
+refinement, and constraint satisfaction.
+Results are reported per dataset, per task type, and in aggregate. Aggregates use normalised
+metrics so that reward scales from different environments do not dominate one another. A
+positive result must not depend on a single dataset hiding failures in the others.
+
+
+9     Ablation Studies
+All ablations are run across ScienceWorld, ALFWorld, and WebShop unless a metric is not
+meaningful for that environment. When a metric is environment-specific, the corresponding
+state-level replacement is pre-registered in the dataset analysis plan.
+
+    Ablation              Variants                          Question answered
+    Heteromodal           observations + actions +          Is world-model quality
+    masking               Think blocks vs. action-only      specifically tied to reconstructing
+                          vs. observation-only              observations?
+    Masking granularity   semantic block masking vs.        Do cohesive trajectory blocks
+                          token-level masking vs. span      beat scattered tokens?
+                          masking
+    Objective mixture     full D-Flex vs. no inverse        Which conditional objectives
+                          dynamics vs. no retrodiction      contribute to the gains?
+                          vs. no imputation vs. no
+                          denoising
+    Curriculum            incremental ramp vs. fixed        Does the ramp improve
+                          low, fixed medium, fixed high     convergence and OOD
+                          mask ratio                        dynamics?
+    Mask-ratio endpoint   30, 50, and 70 percent ceilings   Where do reconstruction failure
+                                                            and world-model gains trade off?
+    Think-block           keep Think, remove Think,         Do reasoning traces help, leak, or
+    treatment             mask Think, evaluate with         distract from dynamics learning?
+                          Think hidden
+    Decoding procedure    iterative diffusion, one-shot     Does inference-time denoising or
+                          mask prediction, causal           correction drive coherence?
+                          semi-autoregressive diffusion,
+                          ProSeCo-style correction
+    Supervision budget    matched target count vs.          Does flexible masking improve
+                          relaxed views per trajectory k    per-token supervision or mainly
+                                                            data efficiency?
+    Context controls      matched context length vs.        Are gains caused by future
+                          natural context length            context or by objective
+                                                            structure?
+    Dataset transfer      train per-dataset, joint train,   Does the masking strategy
+                          and cross-dataset transfer        generalise across dynamics
+                          where feasible                    types?
+
+
+
+
+                                                9
+10     Analysis and Statistical Reporting
+The primary comparison is D-Flex versus D-AR on the same diffusion checkpoint. Secondary
+comparisons include D-Flex versus D-Random, D-Flex versus AR-FullSeq, and D-Flex versus
+AR-SFT. Results are reported with mean and uncertainty across random seeds where compute
+permits. If compute prevents full replication for the largest runs, those results are labelled
+exploratory and smaller-scale replicated runs are used to estimate variance.
+The analysis reports both behavioural and mechanistic outcomes:
+ • ID and OOD task success;
+ • action-conditioned next-state accuracy;
+ • closed-loop rollout coherence;
+ • counterfactual consistency;
+ • latent-state probe accuracy;
+ • corruption recovery;
+ • target-type reconstruction loss;
+ • compute, tokens, and wall-clock cost.
+An outcome is considered strong evidence for the proposal only if D-Flex improves the world-
+model diagnostics and not merely the easiest reconstruction losses. An outcome where D-Flex
+improves probes but not task success is still informative: it would suggest that representation
+learning improved while decoding, planning, or action selection remained the bottleneck.
+
+
+11     Success Criteria
+The strongest positive result is:
+ • D-Flex beats D-AR on OOD task success or narrows the OOD gap while preserving ID
+   performance;
+ • D-Flex improves action-conditioned next-state prediction and closed-loop rollout coherence;
+ • D-Flex improves counterfactual consistency under environment-valid edits;
+ • D-Flex improves latent-state probe performance under anti-leakage controls;
+ • observation-masking ablations show that the gains disappear or shrink when observations
+   are removed from the reconstruction targets.
+A clean negative result is also valuable. If D-Flex matches D-AR under matched supervision and
+context controls, then flexible masking adds little beyond causal diffusion training. If D-Random
+matches D-Flex, then structured block-wise heteromodal masking is unnecessary. If AR-FullSeq
+matches or beats D-Flex on world-model metrics, then causal full-sequence modelling may be
+sufficient for these environments.
+
+
+12     Known Limitations
+Limited world scope. The proposal studies text-agent environments with explicit state and
+verifiable dynamics. It does not establish open-ended world modelling, physical grounding
+beyond text, or general scientific reasoning.
+
+                                               10
+Base-model confounds. AR-SFT and diffusion backbones cannot share initialisation. There-
+fore AR-versus-diffusion comparisons are softer than D-AR-versus-D-Flex comparisons. The
+within-substrate diffusion comparison is the primary causal contrast.
+
+Supervision composition. Matched target count does not equal matched information. D-
+Flex may see richer target mixtures and future context. The AR-FullSeq control, block-type
+reporting, context-length controls, and action-only/observation-only ablations are included to
+reduce this ambiguity.
+
+Templated observations. ScienceWorld and ALFWorld observations can contain repeated
+templates. A model may reconstruct plausible text without learning causal dynamics. This is
+why state-level next-observation metrics and counterfactual tests are primary.
+
+Offline coverage. Expert trajectories may undersample failures, invalid actions, and rare
+state transitions. This limits counterfactual learning. Where possible, held-out interventions
+are generated through environment simulators rather than inferred only from expert traces.
+
+Probe dependence. Linear probes diagnose representational accessibility, not necessarily
+causal use. Probe results are paired with closed-loop prediction and counterfactual interventions
+to avoid overclaiming.
+
+Execution risk. Running all datasets, conditions, ablations, and probe analyses is compute-
+intensive. The plan therefore separates the primary D-AR versus D-Flex test from secondary
+ablations in reporting order, but the intended experimental suite includes all ablations and all
+dataset comparisons.
+
+
+13     Infrastructure
+Training and activation collection run on the NUS SOC GPU cluster via Slurm. The minimum
+target is one A100 40GB for parameter-efficient fine-tuning, with A100 80GB or H100 jobs
+reserved for activation collection, long-context batches, and full ablation runs. Diffusion con-
+ditions fine-tune one open masked-diffusion backbone such as LLaDA2.0-mini. Autoregressive
+baselines use Ling-mini-2.0.
+The implementation includes explicit logging of trajectory IDs, mask objective IDs, target block
+types, context length, target ratio, diffusion time, random seed, and supervised token count.
+These logs are required for the supervision-budget audit.
+
+
+14     Timeline
+The full plan is a ten-week sprint beginning in June 2026. Because the scope includes all datasets
+and all ablations, the schedule is aggressive and depends on cluster availability. The reporting
+order is pre-registered so that the primary scientific comparison is available even if reruns are
+delayed.
+
+
+15     Expected Contributions
+The project aims to contribute three things. First, it provides a controlled within-substrate
+comparison of causal and flexible masking for diffusion language-model agents. Second, it
+
+                                               11
+ Weeks          Milestone
+ 1–2            Build typed-block tokeniser, dataset loaders, simulator-aligned state labels, leakage
+                audit, and supervision-budget logger. Smoke-test ScienceWorld, ALFWorld, and
+                WebShop.
+ 3–4            Implement D-AR, D-Random, D-Flex, AR-SFT, and AR-FullSeq. Implement mask
+                samplers, objective mixture, curriculum scheduler, and deterministic evaluation har-
+                ness.
+ 5–6            Train main conditions across all datasets under matched supervision and compute.
+                Run initial ID/OOD task success and next-state prediction evaluations.
+ 7              Collect activations and run latent-state probes with anti-leakage controls. Run closed-
+                loop horizon 3, 5, and 10 dynamics evaluations.
+ 8              Run counterfactual consistency and corruption-recovery evaluations, including one-
+                shot, iterative diffusion, and ProSeCo-style correction decoding.
+ 9              Run ablation suite across datasets: heteromodal masking, granularity, objective mix-
+                ture, curriculum, mask-ratio endpoint, Think-block treatment, decoding, context, and
+                supervision budget.
+ 10             Complete data-efficiency curves, dataset-type analysis, statistical reporting, failure
+                analysis, and final write-up.
+
+supplies a detailed evaluation suite for text-world modelling that goes beyond task success
+to include next-state prediction, counterfactual consistency, latent-state probes, and corruption
+recovery. Third, it tests whether observation reconstruction is the mechanism that turns masked
+trajectory learning from policy imitation into dynamics modelling.
+
+
+16     References
+
+References
+ [1] Wu, P., Majumdar, A., Stone, K., Lin, Y., Mordatch, I., Abbeel, P., and Rajeswaran,
+     A. (2023). Masked Trajectory Models for Prediction, Representation, and Control. ICML.
+     arXiv:2305.02968.
+
+ [2] Carroll, M., Paradise, O., Lin, J., Georgescu, R., Sun, M., Bignell, D., Milani, S., Hofmann,
+     K., Hausknecht, M., Dragan, A., and Devlin, S. (2022). UniMASK: Unified Inference in
+     Sequential Decision Problems. NeurIPS. arXiv:2211.10869.
+
+ [3] Sahoo, S. S., Arriola, M., Schiff, Y., Gokaslan, A., Marroquin, E., Chiu, J., Rush, A., and
+     Kuleshov, V. (2024). Simple and Effective Masked Diffusion Language Models. NeurIPS.
+     arXiv:2406.07524.
+
+ [4] Nie, S., Zhu, F., You, Z., Zhang, X., Ou, J., Hu, J., Zhou, J., Lin, Y., Wen, J.-R., and Li,
+     C. (2025). Large Language Diffusion Models. arXiv:2502.09992.
+
+ [5] Li, K., Hopkins, A. K., Bau, D., Viegas, F., Pfister, H., and Wattenberg, M. (2023).
+     Emergent World Representations: Exploring a Sequence Model Trained on a Synthetic
+     Task. ICLR. arXiv:2210.13382.
+
+ [6] Nanda, N., Lee, A., and Wattenberg, M. (2023). Emergent Linear Representations in World
+     Models of Self-Supervised Sequence Models. arXiv:2309.00941.
+
+ [7] Tay, Y., Dehghani, M., Tran, V. Q., Garcia, X., Wei, J., Wang, X., Chung, H. W., Shakeri,
+     S., Bahri, D., Schuster, T., Zheng, H. S., Zhou, D., Houlsby, N., and Metzler, D. (2022).
+     UL2: Unifying Language Learning Paradigms. arXiv:2205.05131.
+
+                                                 12
+ [8] Bavarian, M., Jun, H., Tezak, N., Schulman, J., McLeavey, C., Tworek, J., and Chen, M.
+     (2022). Efficient Training of Language Models to Fill in the Middle. arXiv:2207.14255.
+
+ [9] Schiff, Y., Belhasin, O., Uziel, R., Wang, G., Arriola, M., Turok, G., Elad, M., and
+     Kuleshov, V. (2026). Learn from Your Mistakes: Self-Correcting Masked Diffusion Models.
+     arXiv:2602.11590.
+
+[10] Li, Y., Wang, H., Qiu, J., Yin, Z., Zhang, D., Qian, C., Li, Z., Ma, P., Chen, G., and Ji, H.
+     (2025). From Word to World: Can Large Language Models be Implicit Text-based World
+     Models? arXiv:2512.18832.
+
+[11] Lu, Q., Ding, L., Zhang, K., Zhang, J., and Tao, D. (2026). The Bitter Lesson of
+     Diffusion Language Models for Agentic Workflows: A Comprehensive Reality Check.
+     arXiv:2601.12979.
+
+[12] Song, Y., Yin, D., Yue, X., Huang, J., Li, S., and Lin, B. Y. (2024). Trial and Error:
+     Exploration-Based Trajectory Optimization for LLM Agents. ACL. arXiv:2403.02502.
+
+[13] Shridhar, M., Yuan, X., Cote, M.-A., Bisk, Y., Trischler, A., and Hausknecht, M. (2021).
+     ALFWorld: Aligning Text and Embodied Environments for Interactive Learning. ICLR.
+     arXiv:2010.03768.
+
+[14] Wang, R., Jansen, P., Cote, M.-A., and Ammanabrolu, P. (2022). ScienceWorld: Is your
+     Agent Smarter than a 5th Grader? EMNLP. arXiv:2203.07540.
+
+[15] Yao, S., Chen, H., Yang, J., and Narasimhan, K. (2022). WebShop: Towards Scalable Real-
+     World Web Interaction with Grounded Language Agents. NeurIPS. arXiv:2207.01206.
+
+
+
+
+                                               13
+
