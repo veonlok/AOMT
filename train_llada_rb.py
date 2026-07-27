@@ -4,7 +4,7 @@
 Objective sets:
   d_ar_section  — mask ALL action blocks; context = goal+think+obs (bidirectional).
                   Matches LLaDA inference: set every action to MASK, denoise the full traj.
-                  Rate is automatic (~6.5% for ScienceWorld).
+                  Rate is automatic (~6.5% for ScienceWorld-v1, ~21% for v2).
   d_progressive — span-masking curriculum: span grows 1→max_span over training.
                   --prog_exponent controls growth speed (higher = slower growth).
   random_block  — random token masking, bidirectional context (Phase 3 baseline)
@@ -12,17 +12,28 @@ Objective sets:
   d_flex        — 4 bidirectional objectives (Phase 3)
   d_ar_refined  — uniform-position span, causal context
 
+Datasets:
+  scienceworld     — original SW with Think blocks (1187 train)
+  scienceworld-v2  — scienceworld-compact-v2: no Think, 3534 train, state_labels (RECOMMENDED)
+  alfworld         — ALFWorld all trajectories (6574 train)
+  alfworld-v2      — ALFWorld success-only (3208 train, RECOMMENDED)
+  webshop          — WebShop (excluded: seq_len=36, too trivial)
+  All paths under --data_dir_tw (default: data/textworld/).
+
 Shared validation metrics (computed for all objectives):
-  val/nextobs_loss     — predict last obs block from causal prefix
-  val/nextaction_loss  — predict last action block from causal prefix
-Both are directly relevant to inference: nextaction = policy evaluation,
-nextobs = world model / transition dynamics evaluation.
+  val/nextobs_loss        — predict last obs block from causal prefix (world model)
+  val/nextaction_loss     — predict last action block from causal prefix (policy)
+  val/sem_action_sim      — semantic cosine similarity of predicted vs ground-truth action
+  val/outcome_consistency — NLI probability that action_pred → obs_gt (non-determinism aware)
+  val/oae                 — Outcome-Aware Equivalence = max(SAS, OOC) per sample (main metric)
 
-Full val sweep (--full_val_at_end): nextobs over all 148 val trajectories.
+OAE rationale: ScienceWorld is non-deterministic — "go north" and "teleport to kitchen"
+may both be valid. Token F1 scores them 0; OAE recognises outcome equivalence via a
+22M sentence encoder (SAS) + 44M NLI model (OOC). max ensures credit for either paraphrase
+OR outcome-equivalent-but-different actions.
 
-Multi-dataset support: --datasets scienceworld,textworld
-  textworld = ALFWorld + WebShop from Joshyxwa/cp2107-textworld-trajectories.
-  Download first with: python fetch_textworld_data.py
+Long trajectory handling: sequences > max_len are split into overlapping windows
+(stride = max_len // 2) that always prepend the goal block for context.
 
 Verify mode: --verify checks all masking invariants.
              --show_samples N also prints N annotated trajectory examples for human review.
@@ -61,7 +72,7 @@ def read_jsonl(path):
     with open(path) as f:
         return [json.loads(l) for l in f if l.strip()]
 
-def row_to_arrays(row, tok, max_len, drop_leaky_think=True):
+def row_to_arrays(row, tok, max_len=None, drop_leaky_think=True):
     leaky = set()
     if drop_leaky_think:
         for fl in row.get("leakage_flags", []) or []:
@@ -82,37 +93,107 @@ def row_to_arrays(row, tok, max_len, drop_leaky_think=True):
             ids.append(int(t)); btype.append(bt)
             step.append(int(blk.get("step", -1))); bidx.append(bi)
         bi += 1
-    if not ids or len(ids) > max_len:
+    if not ids:
+        return None
+    if max_len is not None and len(ids) > max_len:
         return None
     return Example(np.array(ids, np.int64), np.array(btype, np.int64),
                    np.array(step, np.int64), np.array(bidx, np.int64),
                    str(row.get("trajectory_id", "?")))
 
+
+def sliding_window_split(ex, max_len, stride=None):
+    """Split a long Example into overlapping windows, each prepended with the goal block.
+
+    Windows always start with the goal tokens so every window has task context.
+    Splits at block (bidx) boundaries — never mid-block.
+    stride defaults to half the non-goal space available per window."""
+    L = len(ex.ids)
+    if L <= max_len:
+        return [ex]
+
+    goal_mask  = ex.btype == GOAL
+    goal_ids   = ex.ids[goal_mask]
+    goal_btype = ex.btype[goal_mask]
+    goal_step  = ex.step[goal_mask]
+    goal_bidx  = ex.bidx[goal_mask]
+
+    ng_idx = np.where(~goal_mask)[0]   # non-goal token positions
+    ngl    = len(ng_idx)
+    avail  = max_len - len(goal_ids)
+    if avail <= 0:
+        return [ex]
+
+    if stride is None:
+        stride = max(1, avail // 2)
+
+    windows = []
+    start = 0
+    while start < ngl:
+        end = min(start + avail, ngl)
+        # snap to last block boundary before end (avoid mid-block cuts)
+        if end < ngl:
+            bidx_slice = ex.bidx[ng_idx[start:end]]
+            snap = end
+            for k in range(len(bidx_slice) - 1, 0, -1):
+                if bidx_slice[k] != bidx_slice[k - 1]:
+                    snap = start + k
+                    break
+            if snap > start:
+                end = snap
+        sl = ng_idx[start:end]
+        w_ids   = np.concatenate([goal_ids,   ex.ids[sl]])
+        w_btype = np.concatenate([goal_btype, ex.btype[sl]])
+        w_step  = np.concatenate([goal_step,  ex.step[sl]])
+        w_bidx  = np.concatenate([goal_bidx,  ex.bidx[sl]])
+        windows.append(Example(w_ids, w_btype, w_step, w_bidx,
+                                f"{ex.traj_id}_w{len(windows)}"))
+        start += stride
+
+    return windows or [ex]
+
+
 def load_split(path, tok, max_len):
-    examples, dropped = [], 0
+    examples, dropped, windowed = [], 0, 0
     for r in read_jsonl(path):
-        e = row_to_arrays(r, tok, max_len)
-        if e is None: dropped += 1
-        else: examples.append(e)
+        e = row_to_arrays(r, tok, max_len=None)   # no length limit in parser
+        if e is None:
+            dropped += 1
+        elif len(e.ids) > max_len:
+            wins = sliding_window_split(e, max_len)
+            examples.extend(wins); windowed += 1
+        else:
+            examples.append(e)
     if dropped:
-        print(f"[data] {os.path.basename(path)}: dropped {dropped} seqs > {max_len} tokens")
+        print(f"[data] {os.path.basename(path)}: dropped {dropped} empty seqs")
+    if windowed:
+        print(f"[data] {os.path.basename(path)}: sliding-windowed {windowed} seqs > {max_len} tokens")
     return examples
 
 def load_datasets(args, tok):
     """Load one or more datasets (comma-separated in --datasets).
 
-    Dataset identifiers:
-      scienceworld — data/             (1187 train / 148 val)
-      alfworld     — data/textworld/alfworld  (6574 train / 251 val, seq_len mean=2272)
-      webshop      — data/textworld/webshop   (3014 train / 377 val, seq_len mean=36 — WARNING)
+    Dataset identifiers (all TextWorld paths are relative to --data_dir_tw):
+      scienceworld    — legacy SW with Think blocks (1187 train / 148 val)
+      scienceworld-v2 — scienceworld-compact-v2: no Think, state_labels, 3534 train (RECOMMENDED)
+      alfworld        — ALFWorld all trajectories (6574 train / 251 val)
+      alfworld-v2     — ALFWorld success-only (3208 train / 111 val, RECOMMENDED)
+      webshop         — EXCLUDED: seq_len=36 (trivial for 16B model)
 
-    NOTE: WebShop sequences average only 36 tokens (trivial for 16B model).
-          ALFWorld has action_frac=0.87% (vs ScienceWorld 6.5%) — gradient is very sparse
-          for d_ar_section on ALFWorld; consider --grad_accum 8.
+    scienceworld-v2 format differences vs v1:
+      - No Think blocks (compact: Goal → Obs → Action → Obs → ...)
+      - Has state_labels (goal_progress, score) — rich supervision signal
+      - Action fraction ~21% vs 6.5% in v1
+      - ~3% of trajectories exceed 8192 tokens → auto sliding window
+
+    NOTE: ALFWorld action_frac=0.87% — gradient is very sparse for d_ar_section.
+          Use --grad_accum 8 for ALFWorld-only runs.
     """
     _TW_SUBDIRS = {
-        "alfworld": "alfworld",
-        "webshop":  "webshop",
+        "scienceworld-v2": "scienceworld-compact-v2",
+        "alfworld":        "alfworld",
+        "alfworld-v2":     "alfworld-success-v2",
+        "webshop":         "webshop",
     }
     train_all, val_all = [], []
     for ds in args.datasets.split(","):
@@ -120,6 +201,9 @@ def load_datasets(args, tok):
         if ds == "scienceworld":
             tr = load_split(os.path.join(args.data_dir, "train.jsonl"),      tok, args.max_len)
             vl = load_split(os.path.join(args.data_dir, "validation.jsonl"), tok, args.max_len)
+        elif ds == "webshop":
+            print(f"[data] WARNING: webshop excluded (seq_len=36, trivial for 16B). Skipping.")
+            continue
         elif ds in _TW_SUBDIRS:
             sub = os.path.join(args.data_dir_tw, _TW_SUBDIRS[ds])
             if not os.path.isfile(os.path.join(sub, "train.jsonl")):
@@ -129,7 +213,9 @@ def load_datasets(args, tok):
             tr = load_split(os.path.join(sub, "train.jsonl"),      tok, args.max_len)
             vl = load_split(os.path.join(sub, "validation.jsonl"), tok, args.max_len)
         else:
-            raise ValueError(f"Unknown dataset: {ds!r}. Choose from: scienceworld, alfworld, webshop")
+            raise ValueError(
+                f"Unknown dataset: {ds!r}. Choose from: "
+                f"scienceworld, scienceworld-v2, alfworld, alfworld-v2, webshop")
         print(f"[data] {ds}: train={len(tr)} val={len(vl)}")
         train_all.extend(tr); val_all.extend(vl)
     return train_all, val_all
@@ -554,6 +640,127 @@ def _unigram_f1(pred_ids, true_ids):
     return 2 * p * r / (p + r)
 
 
+# ── semantic evaluation ───────────────────────────────────────────────────────
+
+class SemanticEval:
+    """Outcome-Aware Equivalence (OAE) — semantic accuracy for non-deterministic envs.
+
+    ScienceWorld is non-deterministic: "go north" and "teleport to kitchen" may both
+    be valid. Token F1 gives 0; OAE recognises equivalence via two complementary signals:
+
+    SAS (Semantic Action Similarity):
+        Cosine similarity via sentence-transformers/all-MiniLM-L6-v2 (22M params).
+        Handles surface-form paraphrases: "pick up knife" ≈ "grab the knife".
+
+    OOC (Outcome-Outcome Consistency):
+        NLI entailment score via cross-encoder/nli-deberta-v3-small (44M params).
+        Premise: "The agent performs: <action_pred>"
+        Hypothesis: "The resulting observation is: <obs_gt>"
+        P(entailment) is high iff action_pred plausibly causes obs_gt.
+        Handles outcome-equivalent-but-surface-different actions without a simulator.
+
+    OAE = mean_i( max(SAS_i, OOC_i) ) — sufficient conditions:
+        Either paraphrase OR outcome-equivalence earns full credit.
+
+    Label ordering for nli-deberta-v3-small: {0: contradiction, 1: entailment, 2: neutral}
+    """
+    _ENTAIL_IDX = 1
+
+    def __init__(self, sas_model='sentence-transformers/all-MiniLM-L6-v2',
+                 ooc_model='cross-encoder/nli-deberta-v3-small', device='cpu'):
+        from sentence_transformers import SentenceTransformer
+        from sentence_transformers.cross_encoder import CrossEncoder
+        self.encoder = SentenceTransformer(sas_model, device=device)
+        self.nli     = CrossEncoder(ooc_model, device=device)
+        self._checked = False
+
+    def _verify_label_order(self):
+        """One-time sanity check of the NLI entailment index."""
+        if self._checked:
+            return
+        test = [("The agent picks up the knife.", "You pick up the knife.")]
+        s = self.nli.predict(test, apply_softmax=True)[0]
+        if float(s[self._ENTAIL_IDX]) < 0.4:
+            alt = int(s.argmax())
+            print(f"[sem_eval] WARNING: entailment index looks wrong "
+                  f"(score@{self._ENTAIL_IDX}={s[self._ENTAIL_IDX]:.2f}); "
+                  f"switching to {alt}")
+            self._ENTAIL_IDX = alt
+        self._checked = True
+
+    def __call__(self, action_preds, action_gts, obs_gts):
+        """
+        action_preds : list[str] — decoded predicted action tokens
+        action_gts   : list[str] — decoded ground-truth action tokens
+        obs_gts      : list[str] — decoded observation that follows ground-truth action
+
+        Returns (oae, sas, ooc) — floats in [0, 1], higher is better.
+        """
+        if not action_preds:
+            return 0.0, 0.0, 0.0
+        self._verify_label_order()
+
+        # SAS — sentence embedding cosine similarity
+        emb_p = self.encoder.encode(action_preds, convert_to_numpy=True, show_progress_bar=False)
+        emb_g = self.encoder.encode(action_gts,   convert_to_numpy=True, show_progress_bar=False)
+        norm_p = emb_p / (np.linalg.norm(emb_p, axis=1, keepdims=True) + 1e-8)
+        norm_g = emb_g / (np.linalg.norm(emb_g, axis=1, keepdims=True) + 1e-8)
+        sas_per = np.clip(np.sum(norm_p * norm_g, axis=1), 0.0, 1.0)
+
+        # OOC — NLI entailment: does action_pred cause obs_gt?
+        pairs = [
+            (f"The agent performs: {ap}", f"The resulting observation is: {og}")
+            for ap, og in zip(action_preds, obs_gts)
+        ]
+        nli_out  = self.nli.predict(pairs, apply_softmax=True)
+        ooc_per  = nli_out[:, self._ENTAIL_IDX]
+
+        oae_per = np.maximum(sas_per, ooc_per)
+        return float(np.mean(oae_per)), float(np.mean(sas_per)), float(np.mean(ooc_per))
+
+
+def _make_semantic_nextaction_sample(val_data, rng, tok, max_len):
+    """Sample one val example and return arrays + decoded strings for semantic eval.
+
+    Returns (arrs, action_gt_str, obs_gt_str) or None.
+    obs_gt_str is the observation *following* the last action — the oracle outcome.
+    Uses position-order to find the next OBS block (correct for both SW-v1 and SW-v2
+    block orderings: Think→Action→Obs[step+1] and Obs[step]→Action[step]→Obs[step]).
+    """
+    candidates = rng.sample(range(len(val_data)), min(30, len(val_data)))
+    for i in candidates:
+        ex = val_data[i]
+        result = next_action_mask(ex)
+        if result is None:
+            continue
+        ctx, tgt = result
+
+        tgt_pos = np.where(tgt)[0]
+        if len(tgt_pos) == 0:
+            continue
+        action_gt_str = tok.decode(ex.ids[tgt_pos].tolist(), skip_special_tokens=True).strip()
+
+        # Next OBS block after the last masked action token (position-based, format-agnostic)
+        last_act_pos = int(tgt_pos[-1])
+        L = len(ex.ids)
+        pos_after = np.arange(L) > last_act_pos
+        obs_after  = np.where((ex.btype == OBS) & pos_after)[0]
+        if len(obs_after) == 0:
+            continue
+        first_obs_bidx = int(ex.bidx[obs_after[0]])
+        obs_ids = ex.ids[ex.bidx == first_obs_bidx]
+        obs_gt_str = tok.decode(obs_ids.tolist(), skip_special_tokens=True).strip()
+        if not obs_gt_str:
+            continue
+
+        pad_to = min(L, max_len)
+        inp, bt, vld, sc, lab = corrupt(ex, ctx, tgt, pad_to)
+        arrs = (inp[None], bt[None], vld[None], sc[None], lab[None])
+        return arrs, action_gt_str, obs_gt_str
+
+    return None
+
+
 # ── masking visualisation ─────────────────────────────────────────────────────
 
 def show_masked_samples(examples, args, tok):
@@ -719,6 +926,23 @@ def make_charts(hist, obj_loss, budget, out_dir):
         plt.ylim(0, 1); plt.xlabel("step"); plt.ylabel("accuracy / F1")
         plt.legend(); plt.grid(alpha=0.3)
         plt.tight_layout(); plt.savefig(f"{out_dir}/accuracy_curve.png", dpi=130); plt.close()
+
+    # Semantic OAE curve (SAS + OOC + OAE)
+    if hist.get("val_sem_oae") and any(not np.isnan(v) for v in hist["val_sem_oae"]):
+        plt.figure(figsize=(9, 4))
+        vs = hist["val_step"]
+        for key, lbl, col, ls in [
+            ("val_sem_sas", "SAS (sentence sim)",    "tab:blue",   "-"),
+            ("val_sem_ooc", "OOC (NLI entailment)",  "tab:orange", "--"),
+            ("val_sem_oae", "OAE = max(SAS,OOC)",    "tab:green",  "-"),
+        ]:
+            vals = hist.get(key, [])
+            if vals and any(not np.isnan(v) for v in vals):
+                plt.plot(vs, vals, linestyle=ls, color=col, marker="o", label=lbl)
+        plt.ylim(0, 1); plt.xlabel("step"); plt.ylabel("Outcome-Aware Equivalence")
+        plt.title("Semantic Action Accuracy (non-determinism aware)")
+        plt.legend(); plt.grid(alpha=0.3)
+        plt.tight_layout(); plt.savefig(f"{out_dir}/oae_curve.png", dpi=130); plt.close()
 
     # Mask rate
     plt.figure(figsize=(7, 4))
@@ -927,6 +1151,13 @@ def main():
     ap.add_argument("--wandb_mode",    default="offline",
                     choices=["online", "offline", "disabled"])
     ap.add_argument("--wandb_project", default="cp2107-dflex")
+    # Semantic eval (OAE metric)
+    ap.add_argument("--no_sem_eval",      action="store_true",
+                    help="Disable OAE semantic evaluation (SAS + OOC models on CPU)")
+    ap.add_argument("--sem_sas_model", default="sentence-transformers/all-MiniLM-L6-v2",
+                    help="Sentence encoder for Semantic Action Similarity")
+    ap.add_argument("--sem_ooc_model", default="cross-encoder/nli-deberta-v3-small",
+                    help="NLI cross-encoder for Outcome-Outcome Consistency")
     # Verify / visualise
     ap.add_argument("--verify",        action="store_true")
     ap.add_argument("--show_samples",  type=int, default=0,
@@ -988,6 +1219,19 @@ def main():
         except Exception as e:
             print(f"[wandb] off ({e})")
 
+    # ── Semantic evaluator (CPU) ──────────────────────────────────────────────
+    sem_eval = None
+    if not args.no_sem_eval:
+        try:
+            sem_eval = SemanticEval(
+                sas_model=args.sem_sas_model,
+                ooc_model=args.sem_ooc_model,
+                device="cpu",
+            )
+            print("[sem_eval] OAE metric loaded (SAS + OOC)")
+        except Exception as _e:
+            print(f"[sem_eval] disabled — could not load models: {_e}")
+
     rng  = random.Random(args.seed)
     nrng = np.random.default_rng(args.seed)
 
@@ -996,6 +1240,7 @@ def main():
         "val_step": [], "val_loss": [], "val_acc": [], "val_tok_f1": [],
         "val_nextobs": [], "val_nextobs_acc": [],
         "val_nextaction": [], "val_nextaction_acc": [],
+        "val_sem_sas": [], "val_sem_ooc": [], "val_sem_oae": [],
     }
     obj_loss = collections.defaultdict(lambda: [0.0, 0])
     budget   = collections.Counter()
@@ -1007,7 +1252,7 @@ def main():
         return args.mask_rate if args.mask_schedule == "constant" else \
             args.mask_rate_start + (args.mask_rate_end - args.mask_rate_start) * p
 
-    def run_micro(arrs):
+    def run_micro(arrs, return_preds=False):
         inp, bt, val_, sc, lab = arrs
         inp_t = torch.from_numpy(inp).to(device)
         vb_t  = torch.from_numpy(val_).to(device)
@@ -1023,11 +1268,14 @@ def main():
         with torch.no_grad():
             preds = logits.detach().argmax(dim=-1)
             acc   = ((preds == lab_t) & sc_t).sum().float() / sc_t.sum().clamp(min=1).float()
-            # Unigram F1: token-bag overlap at scored positions
             sc_flat   = sc_t.flatten()
             p_ids     = preds.flatten()[sc_flat].cpu()
             t_ids     = lab_t.flatten()[sc_flat].cpu()
             tok_f1    = _unigram_f1(p_ids, t_ids)
+        if return_preds:
+            return (loss, float(acc.item()), float(tok_f1),
+                    sc_t, torch.from_numpy(bt).to(device),
+                    p_ids.numpy(), t_ids.numpy())
         return loss, float(acc.item()), float(tok_f1), sc_t, torch.from_numpy(bt).to(device)
 
     model.train()
@@ -1095,15 +1343,38 @@ def main():
                 vm_no     = float(np.mean(no_ls))     if no_ls     else float("nan")
                 vm_no_acc = float(np.mean(no_accs)) if no_accs else float("nan")
 
-                # 3. Shared nextaction eval
+                # 3. Shared nextaction eval + semantic OAE
                 na_ls, na_accs = [], []
+                sem_preds, sem_gts, sem_obs = [], [], []
                 for _ in range(args.val_batches):
-                    arrs = make_val_nextaction_batch(val, args.batch_size, rng, args.max_len)
-                    if arrs is not None:
-                        l, a, f, _, _ = run_micro(arrs)
-                        na_ls.append(float(l.item())); na_accs.append(a)
-                vm_na     = float(np.mean(na_ls))     if na_ls     else float("nan")
+                    if sem_eval is not None:
+                        # Semantic path: decode predictions for OAE
+                        result = _make_semantic_nextaction_sample(
+                            val, rng, tok, args.max_len)
+                        if result is not None:
+                            arrs, agt, ogt = result
+                            l, a, f, _, _, p_ids, _ = run_micro(arrs, return_preds=True)
+                            na_ls.append(float(l.item())); na_accs.append(a)
+                            pred_str = tok.decode(p_ids.tolist(),
+                                                  skip_special_tokens=True).strip()
+                            sem_preds.append(pred_str)
+                            sem_gts.append(agt)
+                            sem_obs.append(ogt)
+                    else:
+                        arrs = make_val_nextaction_batch(val, args.batch_size,
+                                                         rng, args.max_len)
+                        if arrs is not None:
+                            l, a, f, _, _ = run_micro(arrs)
+                            na_ls.append(float(l.item())); na_accs.append(a)
+
+                vm_na     = float(np.mean(na_ls))   if na_ls   else float("nan")
                 vm_na_acc = float(np.mean(na_accs)) if na_accs else float("nan")
+
+                # Compute OAE outside torch.no_grad context (CPU models, no grad needed)
+                if sem_eval is not None and sem_preds:
+                    vm_oae, vm_sas, vm_ooc = sem_eval(sem_preds, sem_gts, sem_obs)
+                else:
+                    vm_oae = vm_sas = vm_ooc = float("nan")
 
             if ema: ema.restore_from(model)
 
@@ -1111,25 +1382,32 @@ def main():
             hist["val_loss"].append(float(vm))
             hist["val_acc"].append(float(vm_acc))
             hist["val_tok_f1"].append(float(vm_f1))
-            hist["val_nextobs"].append(vm_no);       hist["val_nextobs_acc"].append(vm_no_acc)
-            hist["val_nextaction"].append(vm_na);    hist["val_nextaction_acc"].append(vm_na_acc)
+            hist["val_nextobs"].append(vm_no);    hist["val_nextobs_acc"].append(vm_no_acc)
+            hist["val_nextaction"].append(vm_na); hist["val_nextaction_acc"].append(vm_na_acc)
+            hist["val_sem_sas"].append(vm_sas)
+            hist["val_sem_ooc"].append(vm_ooc)
+            hist["val_sem_oae"].append(vm_oae)
 
             if wb:
                 wb.log({"val/loss": float(vm), "val/acc": float(vm_acc),
                         "val/tok_f1": float(vm_f1),
                         "val/nextobs_loss": vm_no, "val/nextobs_acc": vm_no_acc,
-                        "val/nextaction_loss": vm_na, "val/nextaction_acc": vm_na_acc},
+                        "val/nextaction_loss": vm_na, "val/nextaction_acc": vm_na_acc,
+                        "val/sem_action_sim": vm_sas,
+                        "val/outcome_consistency": vm_ooc,
+                        "val/oae": vm_oae},
                        step=step)
 
             eff_prog = progress ** args.prog_exponent
             span_now = max(1, round(np.exp(np.log(args.prog_max_span) * eff_prog))) \
                        if args.objective_set == "d_progressive" else 0
             span_str = f" span={span_now}" if span_now else ""
+            oae_str = f" oae={vm_oae:.3f}" if not np.isnan(vm_oae) else ""
             print(f"[{step:4d}/{args.steps}] "
                   f"train={accloss:.3f} acc={acccacc:.3f} f1={acctf1:.3f} "
                   f"val={float(vm):.3f} va={float(vm_acc):.3f} "
-                  f"nextobs={vm_no:.3f} nextact={vm_na:.3f} "
-                  f"rate={achieved:.3f}{span_str} "
+                  f"nextobs={vm_no:.3f} nextact={vm_na:.3f}"
+                  f"{oae_str} rate={achieved:.3f}{span_str} "
                   f"({time.time()-t0:.0f}s)")
 
             model.save_pretrained(os.path.join(args.out_dir, f"checkpoint_{step}"))
@@ -1153,8 +1431,11 @@ def main():
         if wb:
             wb.log(sweep_metrics); wb.summary.update(sweep_metrics)
 
-    valid_nextobs = [v for v in hist["val_nextobs"] if not np.isnan(v)]
-    valid_nextact = [v for v in hist["val_nextaction"] if not np.isnan(v)]
+    valid_nextobs  = [v for v in hist["val_nextobs"]    if not np.isnan(v)]
+    valid_nextact  = [v for v in hist["val_nextaction"] if not np.isnan(v)]
+    valid_oae      = [v for v in hist["val_sem_oae"]    if not np.isnan(v)]
+    valid_sas      = [v for v in hist["val_sem_sas"]    if not np.isnan(v)]
+    valid_ooc      = [v for v in hist["val_sem_ooc"]    if not np.isnan(v)]
     metrics = {
         "final_train_loss":         hist["loss"][-1],
         "final_train_acc":          hist["acc"][-1],
@@ -1164,6 +1445,10 @@ def main():
         "final_val_nextaction_loss":hist["val_nextaction"][-1] if hist["val_nextaction"] else None,
         "best_val_nextobs_loss":    float(min(valid_nextobs))  if valid_nextobs else None,
         "best_val_nextaction_loss": float(min(valid_nextact))  if valid_nextact else None,
+        "best_val_oae":             float(max(valid_oae))      if valid_oae else None,
+        "final_val_oae":            float(valid_oae[-1])       if valid_oae else None,
+        "final_val_sem_sas":        float(valid_sas[-1])       if valid_sas else None,
+        "final_val_ooc":            float(valid_ooc[-1])       if valid_ooc else None,
         "mean_mask_rate":           float(np.mean(hist["mask_rate"])),
         "objective_set":            args.objective_set,
         "prog_exponent":            args.prog_exponent,
