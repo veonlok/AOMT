@@ -281,7 +281,7 @@ Results will auto-upload to `AK2802/AOMT/{dflex_v3,dprog,dar_v3}` + wandb sync.
 
 ---
 
-## Phase 5: d_ar_section vs progressive curriculum ablations (RUNNING)
+## Phase 5: d_ar_section vs progressive curriculum ablations (COMPLETED)
 
 Script: `train_llada_rb.py` v4 (commit `4280b41`). gpu-long, 6h, 800 steps.
 Cancelled: dflex_v3, dar_v3 (dropped D-Flex; d_ar_refined superseded by d_ar_section).
@@ -395,30 +395,123 @@ Provides cross-domain diversity: ALF's dense multi-step navigation vs SW's long 
 |-----|-------|-----|-----|-------|--------------|
 | dar_section_combined | 691133 | d_ar_section | N/A | 800 | Combined SW+ALF: does more data diversity help? |
 
-Status: dar_section RUNNING (xgph2), all others PENDING.
-All results auto-upload to `AK2802/AOMT/{run_name}` and wandb sync after completion.
+Status: All SW runs COMPLETED. ALF+combined runs CANCELLED at time limit (6h insufficient).
+
+### Phase 5 Results
+
+| Run | SLURM | best nextobs↓ | best nextact↓ | final nextobs | final train loss | Status |
+|-----|-------|--------------|--------------|---------------|-----------------|--------|
+| dar_section | 691116 | **4.546** | **0.253** | 10.586 | 0.001 | OVERFIT |
+| dprog (Phase 4 ref) | 681709 | — | — | — | — | partial |
+| dprog_med | 691117 | 1.569 | 1.664 | 2.475 | 3.392 | OK |
+| dprog_slow | 691118 | 1.657 | 1.505 | 2.542 | 3.150 | OK |
+| dprog_fast_act (6.5%) | 691128 | **1.534** | 1.625 | 2.473 | 2.127 | OK |
+| dprog_med_act (6.5%) | 691129 | 1.688 | 1.811 | 2.632 | 3.789 | OK |
+| dprog_slow_act (6.5%) | 691130 | 1.981 | 1.623 | 2.756 | 3.574 | OK |
+| dar_section_alf | 691131 | — | — | — | — | CANCELLED (step 380/800) |
+| dprog_med_alf | 691132 | — | — | — | — | CANCELLED (step 380/800) |
+| dar_section_combined | 691133 | — | — | — | — | CANCELLED (step 780/800) |
+
+### Phase 5 Key Findings
+
+**Critical finding 1: d_ar_section severely overfits on SW-v1 (1187 examples).**
+Training curve: train loss 6.4 → 0.001 (acc=1.0), val/task 8.5 → 0.200. But nextobs
+diverges catastrophically: 5.2 → 4.5 (best at step ~140) → 10.6 (final).
+The model memorised action→action mappings while world model quality collapsed.
+Root cause: 1187 examples × ~73 action tokens = very limited diversity. Action tokens
+are short (median=4 tokens), making memorisation easy. Task-specific overfitting.
+
+**Critical finding 2: d_progressive is strongly superior for world model learning.**
+Best nextobs across all runs: dprog_fast_act=1.534, dprog_med=1.569 vs dar_section=4.546.
+Progressive masking hits observations AND actions randomly, forcing the model to learn
+bidirectional context — it cannot overfit to any single token type.
+No catastrophic divergence: final nextobs ~2.4-2.8 vs dar_section's 10.6.
+
+**Critical finding 3: Mask rate (20% vs 6.5%) has minimal effect on nextobs.**
+dprog_fast (20%) best nextobs=N/A vs dprog_fast_act (6.5%) best nextobs=1.534.
+dprog_med (20%) = 1.569 vs dprog_med_act (6.5%) = 1.688. Differences are small.
+The action-rate runs are NOT better than 20% rate despite matching dar_section's rate.
+
+**Critical finding 4: Curriculum speed (exponent) has mild effect.**
+Fast (1.0) → medium (2.0) → slow (3.0) shows slight progression in nextobs (1.534 → 1.657).
+The fast curriculum (more time at large spans early) appears marginally better than slow.
+No strong signal to justify strongly preferring one exponent over another.
+
+**Critical finding 5: ALFWorld/combined training needs >6h wall time.**
+dar_section_alf (691131): cancelled at step 380/800. nextact declining (9.6→4.3) — still
+converging. The sparse action signal (0.87%) requires much longer to learn.
+Combined run (691133): cancelled at step 780/800. Also still converging at end.
+Both would need ~12-15h to complete 800 steps, beyond gpu-long limit.
+
+**Summary:** d_progressive > d_ar_section for world model quality. The overfitting problem
+points to a dataset-size issue that the new scienceworld-compact-v2 (3534 train) addresses.
 
 ---
 
-## Next steps (after Phase 5 results)
+## Phase 6: scienceworld-compact-v2 + OAE semantic metric (QUEUED)
 
-### Priority 1: Analyse Phase 5 run matrix
-Key comparisons to make from the 9-run matrix:
-- **Causal vs Progressive at 20% rate**: dar_section vs dprog_{fast,med,slow} — does causal masking
-  outperform on val/nextaction? Expected: yes (dar_section's training task is exactly nextaction eval).
-- **Curriculum speed** at 20%: dprog_fast vs dprog_med vs dprog_slow — is there a sweet spot?
-- **Action-rate progressive** (6.5%) vs causal: dprog_{fast,med,slow}_act vs dar_section —
-  with equal token budget, does causal supervision structure outperform span-random?
-- **Rate interaction**: dprog_med (20%) vs dprog_med_act (6.5%) — rate effect within same objective.
-- **ALFWorld transfer**: dar_section_alf + dprog_med_alf — can models trained on ALFWorld's
-  extremely sparse signal (0.87% action tokens) still converge? Compare to SW counterparts.
-- **Cross-domain benefit**: dar_section_combined vs dar_section — does joint SW+ALF training help?
+Script: `train_llada_rb.py` v5 (commit `071d60d`). gpu-long, 6h, 800 steps.
 
-### Priority 2: Multi-seed runs
-Best-performing objective (likely dar_section) needs seeds 1 and 2 for publishable error bars.
-Single-seed results illustrative only. Submit 2 more runs after Phase 5 analysis.
+### Dataset changes (scienceworld-compact-v2)
 
-### Priority 3: Action-conditioned next-state prediction
+**Old dataset (scienceworld-v1):** 1187 train / 148 val. Think+Action+Obs blocks.
+**New dataset (scienceworld-compact-v2):** 3534 train / 1762 val (+3× data). NO Think blocks.
+Format: Goal(0) → Obs(0) → Action(1) → Obs(1) → Action(2) → ... (compact, direct).
+State_labels: goal_progress (subgoal completion flags), score (0-100). Rich eval signal.
+Action fraction: ~21% (vs 6.5% in v1, due to no Think blocks diluting).
+Seq length: mean=2094, p90=6267, p99=9435 → 3% exceed 8192 → sliding window applied.
+After sliding-window: 3908 train / 1904 val examples.
+
+Key motivation: dar_section overfitting was due to small dataset size (1187 traj).
+3908 examples should provide much more action diversity → less memorisation.
+
+### Semantic accuracy metric (OAE — replaces token F1)
+
+ScienceWorld is non-deterministic — multiple valid action sequences exist for the same goal.
+Token F1 scores "go north" vs "teleport to kitchen" as 0 even if both are valid paths.
+OAE (Outcome-Aware Equivalence) is designed for this:
+
+- **SAS** (Semantic Action Similarity, 22M): cosine similarity of sentence embeddings.
+  Handles paraphrases: "pick up metal pot" ≈ "pick up metal pot containing nothing" → 0.92.
+  Limitation: SAS=0.78 for "red box" vs "yellow box" (entity-name discrimination is weak).
+
+- **OOC** (Outcome-Outcome Consistency, 44M): NLI entailment score.
+  P("The agent performs: action_pred" → "The resulting observation is: obs_gt").
+  Handles outcome-equivalent-but-surface-different actions without a simulator.
+  "pick up metal pot" → "You move the metal pot to the inventory." → OOC=0.95.
+  Limitation: domain-generic NLI struggles with game-world implication ("grab" → "move to inv").
+
+- **OAE = mean(max(SAS_i, OOC_i))**: perfect baseline=1.000, null baseline=0.060.
+
+Wandb metrics: `val/sem_action_sim`, `val/outcome_consistency`, `val/oae`.
+Note: OOC is more reliable than SAS for catching entity errors (right action family, wrong
+      specific entity), but SAS is more reliable for catching synonym/paraphrase cases.
+      Report both separately in analysis; OAE is the combined headline metric.
+
+### Phase 6 run matrix
+
+| Run | Obj | Exp | Rate | Dataset | Key question |
+|-----|-----|-----|------|---------|--------------|
+| dar_section_v2 | d_ar_section | N/A | auto | scienceworld-v2 | Does 3× data reduce overfitting? |
+| dprog_fast_v2 | d_progressive | 1.0 | 20% | scienceworld-v2 | Best Phase 5 on larger data |
+| dprog_med_v2 | d_progressive | 2.0 | 20% | scienceworld-v2 | Med curriculum on larger data |
+
+### Analysis plan (after Phase 6 results)
+
+1. **OAE vs nextaction**: is OAE correlated with nextaction loss? Higher OAE should = lower nextact.
+2. **Overfitting mitigation**: does dar_section_v2 overfit less than dar_section (1187 vs 3908 train)?
+3. **Curriculum on v2**: does dprog_fast_v2 achieve nextobs < 1.534 (Phase 5 best)?
+4. **OAE discriminability**: which objective scores highest OAE? Expected: dprog > dar_section.
+
+---
+
+## Next steps (after Phase 6 results)
+
+### Priority 1: Multi-seed runs
+Best-performing objective needs seeds 1 and 2 for publishable error bars.
+Single-seed results illustrative only. Submit 2 more runs after Phase 6 analysis.
+
+### Priority 2: Action-conditioned next-state prediction
 Beyond nextobs (predict last obs from prefix), evaluate:
 given prefix + proposed action → predict resulting observation.
 This is a more direct T(s,a)→s' world model test. Requires a small eval script.
