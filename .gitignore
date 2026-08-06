@@ -10,3 +10,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pt
+data/textworld/scienceworld-compact-v2/
+data/textworld/alfworld-success-v2/
+data/textworld_fresh/
