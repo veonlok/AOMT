@@ -16,8 +16,8 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 
-from scripts.transform import taxonomy as tx
-from scripts.transform import env_taxonomy as et
+from notebooks.scripts.transform import taxonomy as tx
+from notebooks.scripts.transform import env_taxonomy as et
 
 
 # ------------------------------------------------------ action categorisation

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Shared helpers, path config, and the split-file loader used across the
-dataset-audit scripts (``audit_dataset.py`` and ``provenance_reports.py``).
+"""Shared helpers, path config, and the split-file loader used by the
+dataset-audit script (``audit_dataset.py``).
 
 This module is intentionally dependency-light (standard library only) so it can
 sit at the bottom of the import graph without creating cycles."""

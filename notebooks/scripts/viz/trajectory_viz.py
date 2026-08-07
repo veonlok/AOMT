@@ -26,8 +26,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from IPython.display import display
 
-from scripts.transform import trajectory_analysis as ta
-from scripts.viz import plot_theme as pt
+from notebooks.scripts.transform import trajectory_analysis as ta
+from notebooks.scripts.viz import plot_theme as pt
 
 
 def profile_env(env, records):
@@ -37,7 +37,6 @@ def profile_env(env, records):
     orchestration only — the figure is drawn by ``plot_env_panels``, so this function
     stays readable as "what a profile is made of"."""
     if not records:
-        print(f"[{env}] no local data — run Section 1 with a valid HF token first.")
         return None
     df = ta.build_features(records)
     print(f"[{env}]  {len(df)} trajectories | schemas: {dict(Counter(df['_schema']))}")

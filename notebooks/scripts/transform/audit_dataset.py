@@ -6,16 +6,15 @@ current split's leakage risk, and builds two leakage-robust benchmark splits
 (balanced IID + grouped OOD). Emits ``trajectory_features.{csv,json}``, the split
 manifests, and ``reports/dataset_audit_report.md``.
 
-Taxonomy/feature logic lives in ``taxonomy.py``; shared io/util helpers in
-``common.py``. The Hugging Face provenance and model-slice reports were split out
-into ``provenance_reports.py`` — run that separately if you need them.
+Taxonomy/feature logic lives in ``taxonomy.py``; shared io/util helpers live in
+``common.py``.
 """
 
 from __future__ import annotations
 
 import json
 
-from scripts.utils.common import (
+from notebooks.scripts.utils.common import (
     ARTIFACTS_DIR,
     REPORTS_DIR,
     counter_object,
@@ -25,7 +24,7 @@ from scripts.utils.common import (
     render_markdown_table,
     write_csv,
 )
-from scripts.transform.taxonomy import extract_features
+from notebooks.scripts.transform.taxonomy import extract_features
 
 
 def build_duplicate_info(features):
@@ -407,37 +406,35 @@ def main():
 
     serializable_features = []
     for feature in features:
-        serializable_features.append(
-            {
-                "trajectory_id": feature["trajectory_id"],
-                "source_split": feature["source_split"],
-                "env_name": feature["env_name"],
-                "trajectory_prefix": feature["trajectory_prefix"],
-                "goal_family": feature["goal_family"],
-                "objective_type": feature["objective_type"],
-                "goal_text": feature["goal_text"],
-                "goal_template_key": feature["goal_template_key"],
-                "n_steps": feature["n_steps"],
-                "n_blocks": feature["n_blocks"],
-                "n_actions": feature["n_actions"],
-                "n_observations": feature["n_observations"],
-                "trajectory_length_bin": feature["trajectory_length_bin"],
-                "observation_density_bin": feature["observation_density_bin"],
-                "interaction_pattern": feature["interaction_pattern"],
-                "ambiguity_pattern": feature["ambiguity_pattern"],
-                "completion_status": feature["completion_status"],
-                "has_leakage_flag": feature["has_leakage_flag"],
-                "repeated_action_ratio": feature["repeated_action_ratio"],
-                "repeated_observation_ratio": feature["repeated_observation_ratio"],
-                "action_skeleton_hash": feature["action_skeleton_hash"],
-                "full_trajectory_hash": feature["full_trajectory_hash"],
-                "goal_action_cluster_key": feature["goal_action_cluster_key"],
-                "duplicate_cluster_id": feature["duplicate_cluster_id"],
-                "current_split_risk": feature["current_split_risk"],
-                "source_file": feature["source_file"],
-                "source_revision": feature["source_revision"],
-            }
-        )
+        serializable_features.append({
+            "trajectory_id": feature["trajectory_id"],
+            "source_split": feature["source_split"],
+            "env_name": feature["env_name"],
+            "trajectory_prefix": feature["trajectory_prefix"],
+            "goal_family": feature["goal_family"],
+            "objective_type": feature["objective_type"],
+            "goal_text": feature["goal_text"],
+            "goal_template_key": feature["goal_template_key"],
+            "n_steps": feature["n_steps"],
+            "n_blocks": feature["n_blocks"],
+            "n_actions": feature["n_actions"],
+            "n_observations": feature["n_observations"],
+            "trajectory_length_bin": feature["trajectory_length_bin"],
+            "observation_density_bin": feature["observation_density_bin"],
+            "interaction_pattern": feature["interaction_pattern"],
+            "ambiguity_pattern": feature["ambiguity_pattern"],
+            "completion_status": feature["completion_status"],
+            "has_leakage_flag": feature["has_leakage_flag"],
+            "repeated_action_ratio": feature["repeated_action_ratio"],
+            "repeated_observation_ratio": feature["repeated_observation_ratio"],
+            "action_skeleton_hash": feature["action_skeleton_hash"],
+            "full_trajectory_hash": feature["full_trajectory_hash"],
+            "goal_action_cluster_key": feature["goal_action_cluster_key"],
+            "duplicate_cluster_id": feature["duplicate_cluster_id"],
+            "current_split_risk": feature["current_split_risk"],
+            "source_file": feature["source_file"],
+            "source_revision": feature["source_revision"],
+        })
 
     (ARTIFACTS_DIR / "trajectory_features.json").write_text(
         json.dumps(serializable_features, indent=2), encoding="utf-8"
@@ -447,19 +444,14 @@ def main():
         json.dumps(duplicate_info["clusters"], indent=2), encoding="utf-8"
     )
     (ARTIFACTS_DIR / "split_current_hf_audit.json").write_text(
-        json.dumps(
-            {
-                "metadata": {
-                    "benchmark": "current_snapshot_audit",
-                    "source": "local-scienceworld-snapshot",
-                    "note": "HF public URL resolves to a model repo; this audit runs on the local trajectory snapshot.",
-                },
-                "summary": current_summary,
+        json.dumps({
+            "metadata": {
+                "benchmark": "current_snapshot_audit",
+                "source": "local-scienceworld-snapshot",
+                "note": "HF public URL resolves to a model repo; this audit runs on the local trajectory snapshot.",
             },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+            "summary": current_summary,
+        },indent=2), encoding="utf-8")
     (ARTIFACTS_DIR / "split_iid_balanced.json").write_text(
         json.dumps(benchmarks["iid"], indent=2), encoding="utf-8"
     )
@@ -467,15 +459,10 @@ def main():
         json.dumps(benchmarks["groupedOod"], indent=2), encoding="utf-8"
     )
     (ARTIFACTS_DIR / "benchmark_verification.json").write_text(
-        json.dumps(
-            {
-                "iid_goal_action_overlap": benchmarks["iid"]["verification"],
-                "ood_goal_template_overlap": benchmarks["groupedOod"]["verification"],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+        json.dumps({
+            "iid_goal_action_overlap": benchmarks["iid"]["verification"],
+            "ood_goal_template_overlap": benchmarks["groupedOod"]["verification"],
+        }, indent=2), encoding="utf-8")
 
     (REPORTS_DIR / "dataset_audit_report.md").write_text(
         build_dataset_audit_report(features, duplicate_info, current_summary, benchmarks),
@@ -483,16 +470,13 @@ def main():
     )
 
     print(
-        json.dumps(
-            {
-                "features": len(serializable_features),
-                "duplicate_clusters": len(duplicate_info["clusters"]),
-                "reports": [
-                    str((REPORTS_DIR / "dataset_audit_report.md").relative_to(REPORTS_DIR.parent)).replace("\\", "/"),
-                ],
-            },
-            indent=2,
-        )
+        json.dumps({
+            "features": len(serializable_features),
+            "duplicate_clusters": len(duplicate_info["clusters"]),
+            "reports": [
+                str((REPORTS_DIR / "dataset_audit_report.md").relative_to(REPORTS_DIR.parent)).replace("\\", "/"),
+            ]
+        }, indent=2)
     )
 
 

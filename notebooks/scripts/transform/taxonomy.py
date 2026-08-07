@@ -1,37 +1,24 @@
 #!/usr/bin/env python3
 """Portable trajectory taxonomy + per-trajectory feature extraction.
 
-This is the reusable core of the dataset audit: goal-family / objective-type /
-interaction-pattern classifiers, goal-template normalization, and
-``extract_features`` which turns a raw ``blocks`` trajectory into the flat feature
-dict consumed by the audit pipeline and by ``notebooks/trajectory_taxonomy.ipynb``.
+This module holds the shared helpers used by the dataset audit: normalization,
+interaction-pattern / ambiguity classifiers, and ``extract_features`` which turns
+a raw ``blocks`` trajectory into the flat feature dict consumed by the audit
+pipeline and by ``notebooks/trajectory_taxonomy.ipynb``.
 
-Kept free of pipeline/orchestration logic so it can be imported standalone."""
+Environment-specific goal-family / objective-type rules live in
+``scripts/transform/env_taxonomy.py``; the ScienceWorld wrappers below remain as
+compatibility shims for older call sites."""
 
 from __future__ import annotations
 
-from scripts.utils.common import sha256_text
+from notebooks.scripts.utils.common import sha256_text
 
-
-ROOM_WORDS = [
-    "kitchen",
-    "bathroom",
-    "bedroom",
-    "workshop",
-    "greenhouse",
-    "foundry",
-    "living room",
-    "outside",
-    "hallway",
-    "art studio",
-]
-
+ROOM_WORDS = ["kitchen", "bathroom", "bedroom", "workshop", "greenhouse", "foundry", "living room", "outside", "hallway", "art studio"]
 COLOR_WORDS = ["blue", "orange", "red", "yellow", "green", "violet", "black", "white"]
-
 
 def normalize_whitespace(text) -> str:
     return " ".join(str(text or "").split())
-
 
 def normalize_goal_template(goal: str) -> str:
     out = normalize_whitespace(goal).lower()
@@ -42,8 +29,7 @@ def normalize_goal_template(goal: str) -> str:
     for color in COLOR_WORDS:
         out = out.replace(color, "<color>")
 
-    normalized = []
-    token = ""
+    normalized, token = [], ""
     for ch in out:
         if ch.isdigit() or ch in ".-":
             token += ch
@@ -58,62 +44,13 @@ def normalize_goal_template(goal: str) -> str:
 
 
 def classify_goal_family(goal: str) -> str:
-    g = normalize_whitespace(goal).lower()
-    if "electrically conductive" in g:
-        return "conductivity"
-    if "measure the temperature of" in g:
-        return "temperature_measurement"
-    if "measure the melting point of" in g:
-        return "melting_point"
-    if "find the animal with the shortest life span, then the longest" in g:
-        return "lifespan_dual"
-    if "find the animal with the longest life span, then the shortest" in g:
-        return "lifespan_dual"
-    if "find the animal with the shortest life span" in g:
-        return "lifespan_shortest"
-    if "find the animal with the longest life span" in g:
-        return "lifespan_longest"
-    if "grow a " in g and " from seed" in g:
-        return "plant_growth"
-    if "find a(n) animal" in g:
-        return "find_animal"
-    if "find a(n) plant" in g:
-        return "find_plant"
-    if "find a(n) non-living thing" in g:
-        return "find_nonliving"
-    if "find a(n) living thing" in g:
-        return "find_living"
-    if "move it to the" in g:
-        return "object_relocation"
-    # --- families that were previously bucketed as "other" ---
-    if "grow a " in g and ("several plants" in g or "cross-pollinat" in g):
-        return "plant_reproduction"
-    if "use chemistry to create" in g:
-        return "chemistry_mixing"
-    if "change the state of matter" in g or any(w in g for w in ("melt ", "boil ", "freeze ")):
-        return "change_state_of_matter"
-    if "turn on" in g and "light bulb" in g:
-        return "power_device"
-    if "focus on the" in g and "life stage" in g:
-        return "focus_lifestage"
-    return "other"
+    from notebooks.scripts.transform import env_taxonomy as et
+    return et.goal_family("scienceworld", goal, None)
 
 
 def classify_objective_type(goal_family: str) -> str:
-    if goal_family.startswith("find_"):
-        return "retrieval"
-    if goal_family.startswith("lifespan") or goal_family == "focus_lifestage":
-        return "comparison"
-    if goal_family == "conductivity":
-        return "classification"
-    if goal_family in {"temperature_measurement", "melting_point"}:
-        return "measurement"
-    if goal_family in {"plant_growth", "plant_reproduction", "chemistry_mixing",
-                       "change_state_of_matter", "power_device"}:
-        return "multi_step_manipulation"
-    if goal_family == "object_relocation":
-        return "manipulation"
-    return "other"
+    from notebooks.scripts.transform import env_taxonomy as et
+    return et.objective_type("scienceworld", goal_family)
 
 
 def classify_length_bin(action_count: int) -> str:
@@ -224,41 +161,39 @@ def extract_features(rows):
             f"{block.get('type')}|{normalize_whitespace(block.get('text', ''))}" for block in blocks
         )
 
-        features.append(
-            {
-                "trajectory_id": str(row.get("trajectory_id", "")),
-                "source_split": row.get("split") or row.get("_sourceSplit"),
-                "env_name": row.get("env", "unknown"),
-                "trajectory_prefix": trajectory_prefix,
-                "goal_text": goal_text,
-                "goal_family": goal_family,
-                "objective_type": objective_type,
-                "goal_instance_key": goal_text.lower(),
-                "goal_template_key": goal_template_key,
-                "n_steps": len(steps_present),
-                "n_blocks": len(blocks),
-                "n_actions": len(actions),
-                "n_observations": len(observations),
-                "n_thinks": len(thinks),
-                "total_block_chars": sum(len(str(block.get("text", ""))) for block in blocks),
-                "avg_observation_chars": round(avg_obs_chars, 2),
-                "trajectory_length_bin": classify_length_bin(len(actions)),
-                "observation_density_bin": classify_observation_density(avg_obs_chars),
-                "interaction_pattern": classify_interaction_pattern(actions, observations),
-                "ambiguity_pattern": classify_ambiguity_pattern(actions, observations),
-                "completion_status": guess_completion_status(row, actions, observations),
-                "has_leakage_flag": bool(row.get("leakage_flags")),
-                "action_skeleton_hash": sha256_text(action_skeleton),
-                "full_trajectory_hash": sha256_text(full_trajectory_text),
-                "goal_action_cluster_key": sha256_text(goal_template_key + "\n" + action_skeleton),
-                "repeated_action_ratio": round(repeated_action_ratio([a.lower() for a in actions]), 3),
-                "repeated_observation_ratio": round(repeated_observation_ratio(observations), 3),
-                "actions": actions,
-                "observations": observations,
-                "leakage_flags": row.get("leakage_flags") or [],
-                "source_file": row.get("_sourceFile"),
-                "source_revision": "local-scienceworld-snapshot",
-                "raw_row": row,
-            }
-        )
+        features.append({
+            "trajectory_id": str(row.get("trajectory_id", "")),
+            "source_split": row.get("split") or row.get("_sourceSplit"),
+            "env_name": row.get("env", "unknown"),
+            "trajectory_prefix": trajectory_prefix,
+            "goal_text": goal_text,
+            "goal_family": goal_family,
+            "objective_type": objective_type,
+            "goal_instance_key": goal_text.lower(),
+            "goal_template_key": goal_template_key,
+            "n_steps": len(steps_present),
+            "n_blocks": len(blocks),
+            "n_actions": len(actions),
+            "n_observations": len(observations),
+            "n_thinks": len(thinks),
+            "total_block_chars": sum(len(str(block.get("text", ""))) for block in blocks),
+            "avg_observation_chars": round(avg_obs_chars, 2),
+            "trajectory_length_bin": classify_length_bin(len(actions)),
+            "observation_density_bin": classify_observation_density(avg_obs_chars),
+            "interaction_pattern": classify_interaction_pattern(actions, observations),
+            "ambiguity_pattern": classify_ambiguity_pattern(actions, observations),
+            "completion_status": guess_completion_status(row, actions, observations),
+            "has_leakage_flag": bool(row.get("leakage_flags")),
+            "action_skeleton_hash": sha256_text(action_skeleton),
+            "full_trajectory_hash": sha256_text(full_trajectory_text),
+            "goal_action_cluster_key": sha256_text(goal_template_key + "\n" + action_skeleton),
+            "repeated_action_ratio": round(repeated_action_ratio([a.lower() for a in actions]), 3),
+            "repeated_observation_ratio": round(repeated_observation_ratio(observations), 3),
+            "actions": actions,
+            "observations": observations,
+            "leakage_flags": row.get("leakage_flags") or [],
+            "source_file": row.get("_sourceFile"),
+            "source_revision": "local-scienceworld-snapshot",
+            "raw_row": row,
+        })
     return features

@@ -27,8 +27,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from scripts.transform import taxonomy as tx
-from scripts.transform import env_taxonomy as et
+from notebooks.scripts.transform import taxonomy as tx
+from notebooks.scripts.transform import env_taxonomy as et
 
 SPLITS = ["train", "validation", "test"]
 
@@ -69,13 +69,13 @@ def canonical_record(row, env_hint=None):
 
 def load_env(env_name, data_dir, splits=SPLITS):
     """Load an environment from ``<data_dir>/<env>/<split>.jsonl`` (canonical per-env
-    layout). Falls back to the flat ``<data_dir>/<split>.jsonl`` for scienceworld."""
+    layout). Falls back to the flat ``<data_dir>/<split>.jsonl`` when the env files
+    live directly under ``data_dir``."""
     data_dir = Path(data_dir)
     records, found_any = [], False
     for split in splits:
         candidates = [data_dir / env_name / f"{split}.jsonl"]
-        if env_name == "scienceworld":
-            candidates.append(data_dir / f"{split}.jsonl")
+        candidates.append(data_dir / f"{split}.jsonl")
         for path in candidates:
             if path.exists():
                 for r in load_jsonl(path):
